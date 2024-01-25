@@ -1,0 +1,16 @@
+age_dis,gender,Count
+18-24,Female,838
+18-24,Male,954
+18-24,Non-Conforming,45
+25-34,Female,2329
+25-34,Male,2477
+25-34,Non-Conforming,138
+35-44,Female,2242
+35-44,Male,2603
+35-44,Non-Conforming,136
+45-54,Female,2212
+45-54,Male,2400
+45-54,Non-Conforming,136
+55-64,Female,469
+55-64,Male,477
+55-64,Non-Conforming,26
