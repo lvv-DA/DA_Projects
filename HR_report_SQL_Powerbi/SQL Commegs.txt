@@ -1,0 +1,6 @@
+-- Here I am Creating DB to Store the Excel files
+CREATE DATABASE HR_Sale;
+-- To start to use DB;
+USE hr_sale;
+-- to See all the table in the DB 
+SHOW TABLES;
