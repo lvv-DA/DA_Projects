@@ -1,7 +1,6 @@
 # Shakespearean Text Generation Using Enhanced LSTM Networks  
 *A Natural Language Processing (NLP) Project*
 
-![Generated Shakespeare Sample](https://via.placeholder.com/600x200?text=Sample+Shakespearean+Output) *(Replace with actual screenshot)*
 
 ## Project Overview  
 This project implements a **character-level text generation model** using Long Short-Term Memory (LSTM) networks to mimic William Shakespeare's writing style. The system learns linguistic patterns from Shakespeare's works and generates original text with similar stylistic properties.
