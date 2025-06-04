@@ -1,0 +1,175 @@
+import pandas as pd
+import joblib
+import os
+from tensorflow.keras.models import load_model
+from tensorflow.keras import backend as K
+import tensorflow as tf
+import numpy as np
+
+# Re-define focal_loss for loading model if it was used in training
+def focal_loss(gamma=2., alpha=.25):
+    def focal_loss_fixed(y_true, y_pred):
+        eps = K.epsilon()
+        y_pred = K.clip(y_pred, eps, 1. - eps)
+        pt_1 = tf.where(K.equal(y_true, 1), y_pred, K.ones_like(y_pred))
+        pt_0 = tf.where(K.equal(y_true, 0), y_pred, K.zeros_like(y_pred))
+        return -K.sum(alpha * K.pow(1. - pt_1, gamma) * K.log(pt_1)) \
+               -K.sum((1 - alpha) * K.pow(pt_0, gamma) * K.log(1. - pt_0))
+    return focal_loss_fixed
+
+def load_all_models(models_dir='models'):
+    """
+    Loads all trained models and the scaler.
+    Args:
+        models_dir (str): Directory where models and scaler are saved.
+    Returns:
+        dict: A dictionary containing loaded models and the scaler.
+    """
+    loaded_assets = {}
+    
+    # Load scaler
+    scaler_path = os.path.join(models_dir, 'scaler.pkl')
+    try:
+        loaded_assets['scaler'] = joblib.load(scaler_path)
+        print(f"Scaler loaded from {scaler_path}")
+    except FileNotFoundError:
+        print(f"Error: Scaler file not found at {scaler_path}")
+        loaded_assets['scaler'] = None
+    except Exception as e:
+        print(f"An error occurred loading scaler: {e}")
+        loaded_assets['scaler'] = None
+
+    # Load XGBoost model
+    xgb_path = os.path.join(models_dir, 'xgb_smote_model.pkl')
+    try:
+        loaded_assets['xgb_smote'] = joblib.load(xgb_path)
+        print(f"XGBoost model loaded from {xgb_path}")
+    except FileNotFoundError:
+        print(f"Error: XGBoost model file not found at {xgb_path}")
+        loaded_assets['xgb_smote'] = None
+    except Exception as e:
+        print(f"An error occurred loading XGBoost model: {e}")
+        loaded_assets['xgb_smote'] = None
+
+    # Load Keras models (need custom_objects for focal_loss)
+    custom_objects = {'focal_loss_fixed': focal_loss()} # Only if focal_loss is used
+    keras_models = {
+        'ann_class_weights': 'ann_class_weights_model.keras',
+        'ann_smote': 'ann_smote_model.keras',
+        'ann_focal_loss': 'ann_focal_loss_model.keras'
+    }
+    for name, filename in keras_models.items():
+        model_path = os.path.join(models_dir, filename)
+        try:
+            # compile=False is often used for prediction to avoid recompilation overhead
+            # and potential issues with custom objects if not strictly needed for prediction logic.
+            # However, if focal_loss is part of the model graph that needs to be active for prediction,
+            # you might need to compile=True and provide custom_objects.
+            # For simplicity, we'll try with compile=False first.
+            loaded_model = load_model(model_path, custom_objects=custom_objects if name == 'ann_focal_loss' else None, compile=False)
+            loaded_assets[name] = loaded_model
+            print(f"{name.replace('_', ' ').title()} model loaded from {model_path}")
+        except FileNotFoundError:
+            print(f"Error: {name} model file not found at {model_path}")
+            loaded_assets[name] = None
+        except Exception as e:
+            print(f"An error occurred loading {name} model: {e}")
+            loaded_assets[name] = None
+            
+    return loaded_assets
+
+
+def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb'):
+    """
+    Makes churn predictions using a given model and preprocessed input data.
+    Args:
+        model: The trained machine learning model (XGBoost or Keras ANN).
+        df_input (pd.DataFrame): The raw input DataFrame for prediction.
+        scaler (StandardScaler): The fitted scaler.
+        X_train_columns (list): List of column names used during training.
+        model_type (str): Type of model ('xgb' or 'ann').
+    Returns:
+        tuple: (predictions (np.array), probabilities (np.array))
+    """
+    if model is None:
+        print(f"Error: Model is not loaded for type {model_type}.")
+        return np.array([]), np.array([])
+
+    # Ensure input matches training columns (handle dummy variables, missing columns)
+    df_processed = pd.get_dummies(df_input.copy(), drop_first=True)
+
+    # Add missing columns (from training data) and reorder
+    for col in X_train_columns:
+        if col not in df_processed.columns:
+            df_processed[col] = 0
+    df_processed = df_processed[X_train_columns]
+
+    if model_type == 'xgb':
+        probs = model.predict_proba(df_processed)[:, 1]
+    elif model_type == 'ann':
+        # Scale for ANN models
+        X_scaled = scaler.transform(df_processed)
+        probs = model.predict(X_scaled).flatten()
+    else:
+        raise ValueError("model_type must be 'xgb' or 'ann'")
+
+    preds = (probs > 0.5).astype(int)
+    return preds, probs
+
+if __name__ == '__main__':
+    # Example usage for making predictions
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    models_dir = os.path.join(project_root, 'models')
+
+    # Load all necessary assets
+    loaded_assets = load_all_models(models_dir)
+
+    scaler = loaded_assets.get('scaler')
+    xgb_model = loaded_assets.get('xgb_smote')
+    ann_model = loaded_assets.get('ann_class_weights')
+    ann_sm_model = loaded_assets.get('ann_smote')
+    ann_focal_model = loaded_assets.get('ann_focal_loss')
+
+    # Create a dummy DataFrame for new predictions
+    df_new_single = pd.DataFrame({
+        'CallFailure': [8], 'Complains': [0], 'SubscriptionLength': [38],
+        'ChargeAmount': [0], 'SecondsUse': [4370], 'FrequencyUse': [71],
+        'FrequencySMS': [5], 'DistinctCalls': [17], 'AgeGroup': [3],
+        'TariffPlan': [1], 'Status': [1], 'Age': [30],
+        'CustomerValue': [197.64]
+    })
+
+    # To get X_train_columns, you need to load the original data and preprocess it once
+    # or save X_train_columns when training the model. For this example, we'll
+    # create a dummy set of columns. In a real scenario, this would come from `model_trainer.py`.
+    # Let's assume you save the X_train_columns to a file or pass them around.
+    # For now, we'll infer it from the example data.
+    # A better approach is to save X.columns from the training set alongside models.
+    # For demonstration, let's load a full dataset to get X_train_columns:
+    from data_loader import load_data
+    from preprocessor import preprocess_data
+    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx')
+    df_full = load_data(data_path)
+    if df_full is not None:
+        X_train_dummy = df_full.drop('Churn', axis=1)
+        X_train_dummy = pd.get_dummies(X_train_dummy, drop_first=True)
+        X_train_columns = X_train_dummy.columns.tolist()
+    else:
+        X_train_columns = df_new_single.columns.tolist() # Fallback, not ideal for real app
+
+    if scaler and xgb_model and ann_model and ann_sm_model and ann_focal_model:
+        # Predict with XGBoost
+        xgb_preds, xgb_probs = predict_churn(xgb_model, df_new_single, scaler, X_train_columns, model_type='xgb')
+        print(f"\nXGBoost Prediction: {xgb_preds[0]}, Probability: {xgb_probs[0]:.4f}")
+
+        # Predict with ANN + Class Weights
+        ann_preds, ann_probs = predict_churn(ann_model, df_new_single, scaler, X_train_columns, model_type='ann')
+        print(f"ANN + Class Weights Prediction: {ann_preds[0]}, Probability: {ann_probs[0]:.4f}")
+
+        # Predict with ANN + SMOTE
+        ann_sm_preds, ann_sm_probs = predict_churn(ann_sm_model, df_new_single, scaler, X_train_columns, model_type='ann')
+        print(f"ANN + SMOTE Prediction: {ann_sm_preds[0]}, Probability: {ann_sm_probs[0]:.4f}")
+
+        # Predict with ANN + Focal Loss
+        ann_focal_preds, ann_focal_probs = predict_churn(ann_focal_model, df_new_single, scaler, X_train_columns, model_type='ann')
+        print(f"ANN + Focal Loss Prediction: {ann_focal_preds[0]}, Probability: {ann_focal_probs[0]:.4f}")
