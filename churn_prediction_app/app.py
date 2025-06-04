@@ -20,7 +20,8 @@ st.set_page_config(page_title="Customer Churn Prediction", layout="centered")
 st.title("Customer Churn Prediction App")
 st.markdown("""
     This application predicts customer churn based on various customer attributes.
-    You can search for an existing customer to auto-fill their details, or enter new details manually.
+    You can search for an an existing customer to auto-fill their details, or enter new details manually.
+    The prediction is made using an **ensemble of four machine learning models** to provide a more robust and insightful result.
 """)
 
 # --- Global Assets Loading (Cached to run only once) ---
@@ -60,9 +61,19 @@ ann_smote_model = assets.get('ann_smote')
 ann_focal_loss_model = assets.get('ann_focal_loss')
 X_train_columns = assets.get('X_train_columns')
 
+# Check if all critical assets are loaded
 if not all([scaler, xgb_model, ann_class_weights_model, ann_smote_model, ann_focal_loss_model, X_train_columns]):
     st.error("One or more models/scaler/training columns could not be loaded. Please ensure models are trained and saved correctly.")
     st.stop() # Stop the app execution if critical assets are missing
+
+# Define all models for the ensemble
+ENSEMBLE_MODELS = {
+    'XGBoost + SMOTE': {'model': xgb_model, 'type': 'xgb'},
+    'ANN + Class Weights': {'model': ann_class_weights_model, 'type': 'ann'},
+    'ANN + SMOTE': {'model': ann_smote_model, 'type': 'ann'},
+    'ANN + Focal Loss': {'model': ann_focal_loss_model, 'type': 'ann'}
+}
+
 
 # --- Load Customer Data (for search functionality) ---
 @st.cache_data
@@ -257,7 +268,6 @@ if all_customers_df is not None:
                     else: # If feature not in row or is NaN, fall back to default
                         st.session_state[feature] = default_values[feature]
 
-
                 st.success(f"Details for Customer ID {selected_customer_row.get('CustomerID', 'N/A')} ({selected_customer_row.get('CustomerName', 'N/A')}) loaded!")
                 st.rerun() # Ensure the input fields update immediately
             else:
@@ -279,9 +289,7 @@ else: # If all_customers_df is None
     st.warning("Customer data not available for search. Please ensure 'customer_data_with_identifiers.csv' is in your `/data/` folder.")
 
 
-
-## Customer Details for Prediction
-
+# --- Customer Details for Prediction ---
 st.header("Customer Details for Prediction")
 st.markdown("**(Auto-filled if customer searched, or enter manually)**")
 
@@ -292,25 +300,21 @@ with col1:
     st.number_input(
         "Call Failure (Number of failed calls)",
         min_value=0, max_value=50,
-        value=st.session_state['CallFailure'],
-        key="CallFailure" # Use the session state key directly
+        key="CallFailure"
     )
     st.number_input(
         "Subscription Length (months)",
         min_value=0, max_value=100,
-        value=st.session_state['SubscriptionLength'],
         key="SubscriptionLength"
     )
     st.number_input(
         "Seconds Use (total seconds in past year)",
         min_value=0, max_value=20000,
-        value=st.session_state['SecondsUse'],
         key="SecondsUse"
     )
     st.number_input(
         "Distinct Calls (number of distinct numbers called in past year)",
         min_value=0, max_value=100,
-        value=st.session_state['DistinctCalls'],
         key="DistinctCalls"
     )
 
@@ -372,7 +376,6 @@ with col2:
     st.number_input(
         "Frequency Use (total calls in past year)",
         min_value=0, max_value=200,
-        value=st.session_state['FrequencyUse'],
         key="FrequencyUse"
     )
 
@@ -393,7 +396,6 @@ with col2:
     st.number_input(
         "Age (Customer age)",
         min_value=15, max_value=90,
-        value=st.session_state['Age'],
         key="Age"
     )
 
@@ -402,7 +404,6 @@ with col3:
     st.number_input(
         "Frequency SMS (total SMS in past year)",
         min_value=0, max_value=500,
-        value=st.session_state['FrequencySMS'],
         key="FrequencySMS"
     )
 
@@ -423,7 +424,6 @@ with col3:
     st.number_input(
         "Customer Value (projected for next year)",
         min_value=0.0, max_value=5000.0,
-        value=st.session_state['CustomerValue'],
         format="%.2f",
         key="CustomerValue"
     )
@@ -439,50 +439,59 @@ input_data = pd.DataFrame({
     'CustomerValue': [st.session_state['CustomerValue']]
 })
 
-st.subheader("Select Model for Prediction")
-model_choice = st.selectbox(
-    "Choose a model:",
-    options=['XGBoost + SMOTE', 'ANN + Class Weights', 'ANN + SMOTE', 'ANN + Focal Loss'],
-    key="model_choice_selectbox" # Add a key
-)
+st.subheader("Ensemble Prediction")
 
-model_mapping = {
-    'XGBoost + SMOTE': {'model': xgb_model, 'type': 'xgb'},
-    'ANN + Class Weights': {'model': ann_class_weights_model, 'type': 'ann'},
-    'ANN + SMOTE': {'model': ann_smote_model, 'type': 'ann'},
-    'ANN + Focal Loss': {'model': ann_focal_loss_model, 'type': 'ann'}
-}
-
-selected_model_info = model_mapping[model_choice]
-selected_model = selected_model_info['model']
-selected_model_type = selected_model_info['type']
-
-if st.button("Predict Churn"):
-    if selected_model is None:
-        st.error(f"Selected model ({model_choice}) is not loaded. Cannot make prediction.")
+if st.button("Predict Churn with Ensemble"):
+    if not all([m['model'] for m in ENSEMBLE_MODELS.values()]):
+        st.error("One or more ensemble models could not be loaded. Cannot make prediction.")
     else:
-        with st.spinner("Making prediction..."): # Add a spinner for prediction
-            prediction, probability = predict_churn(
-                selected_model,
-                input_data,
-                scaler,
-                X_train_columns,
-                selected_model_type
-            )
+        with st.spinner("Making predictions with the ensemble models..."):
+            individual_predictions = []
+            prediction_results = [] # To store probabilities for display
 
-        st.subheader("Prediction Result")
-        if prediction[0] == 1:
-            st.error(f"The customer is predicted to **CHURN** with a probability of **{probability[0]:.2%}**.")
-            st.snow()
-        else:
-            st.success(f"The customer is predicted **NOT** to churn with a probability of **{probability[0]:.2%}**.")
-            st.balloons()
+            for model_name, model_info in ENSEMBLE_MODELS.items():
+                model = model_info['model']
+                model_type = model_info['type']
+
+                # Predict churn for the current input data using the specific model
+                prediction, probability = predict_churn(
+                    model,
+                    input_data,
+                    scaler,
+                    X_train_columns,
+                    model_type
+                )
+                individual_predictions.append(prediction[0])
+                prediction_results.append({
+                    "Model": model_name,
+                    "Predicted Churn (0/1)": prediction[0],
+                    "Churn Probability": f"{probability[0]:.2%}"
+                })
+
+            # Convert results to a DataFrame for display
+            df_predictions = pd.DataFrame(prediction_results)
+
+            # Calculate majority vote
+            churn_votes = sum(individual_predictions)
+            no_churn_votes = len(individual_predictions) - churn_votes
+
+            st.subheader("Individual Model Predictions")
+            st.dataframe(df_predictions, hide_index=True)
+
+            st.subheader("Ensemble Decision (Majority Vote)")
+            if churn_votes >= no_churn_votes: # If 2 or more models predict churn (out of 4)
+                st.error(f"The ensemble predicts the customer will **CHURN** (based on {churn_votes} out of {len(ENSEMBLE_MODELS)} models).")
+                st.snow()
+            else:
+                st.success(f"The ensemble predicts the customer will **NOT CHURN** (based on {no_churn_votes} out of {len(ENSEMBLE_MODELS)} models).")
+                st.balloons()
 
         st.markdown(f"**Interpretation:**")
         st.info(f"""
-            - A probability closer to 1 (or 100%) indicates a higher likelihood of churn.
-            - A probability closer to 0 (or 0%) indicates a lower likelihood of churn.
-            - The threshold for classification is 0.5.
+            - The table above shows the individual prediction and churn probability from each of the four models in the ensemble.
+            - A higher 'Churn Probability' indicates a greater likelihood of the customer churning according to that specific model.
+            - The final **Ensemble Decision** is determined by a majority vote: if more than half of the models predict churn, the ensemble predicts churn.
+            - This ensemble approach provides a more robust and reliable prediction by aggregating insights from diverse models.
         """)
 
 st.markdown("---")
