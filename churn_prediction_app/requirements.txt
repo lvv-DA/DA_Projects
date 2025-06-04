@@ -11,3 +11,4 @@ openpyxl # If your data is .xlsx
 ollama
 matplotlib
 seaborn
+plotly
