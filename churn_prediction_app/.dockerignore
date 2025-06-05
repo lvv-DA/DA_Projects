@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.env
+.venv/
+venv/
+.streamlit/
+data/*.zip # Example, if you have raw zip files
+models/*.zip # Example, if you have raw zip files
+ollama/ # If you have local Ollama installation files you don't want to copy

@@ -1,14 +1,14 @@
-pandas
-numpy==1.26.4
-scikit-learn
-xgboost
-imbalanced-learn
-tensorflow
-keras
-streamlit
+imbalanced_learn
 joblib
-openpyxl # If your data is .xlsx
-ollama
 matplotlib
-seaborn
+numpy
+ollama
+pandas
 plotly
+scikit_learn
+seaborn
+st_copy_to_clipboard
+streamlit
+protobuf
+tensorflow
+xgboost

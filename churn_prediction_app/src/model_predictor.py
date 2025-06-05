@@ -1,10 +1,11 @@
 import pandas as pd
 import joblib
 import os
-from tensorflow.keras.models import load_model
-from tensorflow.keras import backend as K
+from tensorflow.python.keras.models import load_model
+from tensorflow.python.keras import backend as K
 import tensorflow as tf
 import numpy as np
+import google.generativeai as genai
 
 # Re-define focal_loss for loading model if it was used in training
 def focal_loss(gamma=2., alpha=.25):
@@ -26,7 +27,7 @@ def load_all_models(models_dir='models'):
         dict: A dictionary containing loaded models and the scaler.
     """
     loaded_assets = {}
-    
+
     # Load scaler
     scaler_path = os.path.join(models_dir, 'scaler.pkl')
     try:
@@ -79,21 +80,25 @@ def load_all_models(models_dir='models'):
     return loaded_assets
 
 
-def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb'):
+def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', gemini_model=None):
     """
-    Makes churn predictions using a given model and preprocessed input data.
+    Makes churn predictions using a given model and preprocessed input data,
+    and optionally generates churn prevention recommendations using a Gemini model.
+
     Args:
         model: The trained machine learning model (XGBoost or Keras ANN).
         df_input (pd.DataFrame): The raw input DataFrame for prediction.
         scaler (StandardScaler): The fitted scaler.
         X_train_columns (list): List of column names used during training.
         model_type (str): Type of model ('xgb' or 'ann').
+        gemini_model: The initialized Google Gemini generative model (optional).
+
     Returns:
-        tuple: (predictions (np.array), probabilities (np.array))
+        tuple: (predictions (np.array), probabilities (np.array), recommendations (str or None))
     """
     if model is None:
         print(f"Error: Model is not loaded for type {model_type}.")
-        return np.array([]), np.array([])
+        return np.array([]), np.array([]), None
 
     # Ensure input matches training columns (handle dummy variables, missing columns)
     df_processed = pd.get_dummies(df_input.copy(), drop_first=True)
@@ -114,7 +119,29 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb'):
         raise ValueError("model_type must be 'xgb' or 'ann'")
 
     preds = (probs > 0.5).astype(int)
-    return preds, probs
+
+    recommendations = None
+    if gemini_model is not None and len(preds) > 0:
+        # Assuming you're predicting for a single customer for simplicity in Streamlit app
+        customer_data = df_input.iloc[0].to_dict() if not df_input.empty else {}
+        churn_prediction = "Likely to Churn" if preds[0] == 1 else "Unlikely to Churn"
+        churn_probability = probs[0] * 100
+
+        prompt = (
+            f"A customer with the following profile has been predicted as '{churn_prediction}' "
+            f"with a probability of {churn_probability:.2f}%:\n\n"
+            f"Customer Profile: {customer_data}\n\n"
+            "Based on this, suggest concise, actionable, and customer-centric recommendations "
+            "to prevent churn or enhance retention. Focus on 2-3 key strategies. "
+            "Format the recommendations as bullet points."
+        )
+        try:
+            response = gemini_model.generate_content(prompt)
+            recommendations = response.text
+        except Exception as e:
+            recommendations = f"Failed to get recommendations from Gemini: {e}"
+
+    return preds, probs, recommendations
 
 if __name__ == '__main__':
     # Example usage for making predictions
@@ -142,9 +169,7 @@ if __name__ == '__main__':
     # To get X_train_columns, you need to load the original data and preprocess it once
     # or save X_train_columns when training the model. For this example, we'll
     # create a dummy set of columns. In a real scenario, this would come from `model_trainer.py`.
-    # Let's assume you save the X_train_columns to a file or pass them around.
-    # For now, we'll infer it from the example data.
-    # A better approach is to save X.columns from the training set alongside models.
+    # Let's assume you save the X.columns from the training set alongside models.
     # For demonstration, let's load a full dataset to get X_train_columns:
     from data_loader import load_data
     from preprocessor import preprocess_data
@@ -158,18 +183,24 @@ if __name__ == '__main__':
         X_train_columns = df_new_single.columns.tolist() # Fallback, not ideal for real app
 
     if scaler and xgb_model and ann_model and ann_sm_model and ann_focal_model:
+        # Initialize Gemini model
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY")) # Ensure your API key is set
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')  # Use gemini-1.5-flash
+
         # Predict with XGBoost
-        xgb_preds, xgb_probs = predict_churn(xgb_model, df_new_single, scaler, X_train_columns, model_type='xgb')
-        print(f"\nXGBoost Prediction: {xgb_preds[0]}, Probability: {xgb_probs[0]:.4f}")
+        xgb_preds, xgb_probs, xgb_recs = predict_churn(xgb_model, df_new_single, scaler, X_train_columns, model_type='xgb', gemini_model=gemini_model)
+        print(f"\nXGBoost Prediction: {xgb_preds[0]}, Probability: {xgb_probs[0]:.4f}, Recommendations: {xgb_recs}")
 
         # Predict with ANN + Class Weights
-        ann_preds, ann_probs = predict_churn(ann_model, df_new_single, scaler, X_train_columns, model_type='ann')
-        print(f"ANN + Class Weights Prediction: {ann_preds[0]}, Probability: {ann_probs[0]:.4f}")
+        ann_preds, ann_probs, ann_recs = predict_churn(ann_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
+        print(f"ANN + Class Weights Prediction: {ann_preds[0]}, Probability: {ann_probs[0]:.4f}, Recommendations: {ann_recs}")
 
         # Predict with ANN + SMOTE
-        ann_sm_preds, ann_sm_probs = predict_churn(ann_sm_model, df_new_single, scaler, X_train_columns, model_type='ann')
-        print(f"ANN + SMOTE Prediction: {ann_sm_preds[0]}, Probability: {ann_sm_probs[0]:.4f}")
+        ann_sm_preds, ann_sm_probs, ann_sm_recs = predict_churn(ann_sm_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
+        print(f"ANN + SMOTE Prediction: {ann_sm_preds[0]}, Probability: {ann_sm_probs[0]:.4f}, Recommendations: {ann_sm_recs}")
 
         # Predict with ANN + Focal Loss
-        ann_focal_preds, ann_focal_probs = predict_churn(ann_focal_model, df_new_single, scaler, X_train_columns, model_type='ann')
-        print(f"ANN + Focal Loss Prediction: {ann_focal_preds[0]}, Probability: {ann_focal_probs[0]:.4f}")
+        ann_focal_preds, ann_focal_probs, ann_focal_recs = predict_churn(ann_focal_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
+        print(f"ANN + Focal Loss Prediction: {ann_focal_preds[0]}, Probability: {ann_focal_probs[0]:.4f}, Recommendations: {ann_focal_recs}")
+        
+        
