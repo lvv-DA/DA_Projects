@@ -7,6 +7,8 @@ import seaborn as sns
 import plotly.graph_objects as go
 import time
 import google.generativeai as genai
+
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # This hides all GPUs from TensorFlow
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' # This disables oneDNN optimizations as suggested by a warning
 
