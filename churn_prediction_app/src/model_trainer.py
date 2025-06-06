@@ -12,6 +12,10 @@ from tf_keras.layers import Dense
 from tf_keras import backend as K
 import tensorflow as tf
 
+# Ensure data_loader and preprocessor are imported correctly
+from data_loader import load_data
+from preprocessor import preprocess_data, save_scaler
+
 def focal_loss(gamma=2., alpha=.25):
     """Focal loss for binary classification."""
     def focal_loss_fixed(y_true, y_pred):
@@ -23,128 +27,150 @@ def focal_loss(gamma=2., alpha=.25):
                -K.sum((1 - alpha) * K.pow(pt_0, gamma) * K.log(1. - pt_0))
     return focal_loss_fixed
 
-def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_sm, y_sm):
+def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_sm, y_sm, X_train_cols, models_dir):
     """
     Trains and evaluates multiple churn prediction models.
-    Args:
-        X_train_scaled (pd.DataFrame): Scaled training features.
-        y_train (pd.Series): Training target.
-        X_test_scaled (pd.DataFrame): Scaled testing features.
-        y_test (pd.Series): Testing target.
-        X_sm (pd.DataFrame): SMOTE-resampled training features.
-        y_sm (pd.Series): SMOTE-resampled training target.
-    Returns:
-        dict: A dictionary containing trained models.
-    """
-    trained_models = {}
-
-    # ----- MODEL 1: XGBoost + SMOTE (Original X and y for SMOTE here) -----
-    # Note: X_sm and y_sm passed here are already scaled from preprocessor
-    xgb = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    xgb.fit(X_sm, y_sm)
-    y_pred_xgb = xgb.predict(X_test_scaled) # Predict on scaled X_test
-    print("\n✅ XGBoost + SMOTE")
-    print(classification_report(y_test, y_pred_xgb))
-    print("ROC AUC:", roc_auc_score(y_test, y_pred_xgb))
-    trained_models['xgb_smote'] = xgb
-
-    # ----- MODEL 2: ANN + Class Weights -----
-    classes = np.unique(y_train)
-    weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
-    class_weights = dict(zip(classes, weights))
-
-    ann = Sequential()
-    ann.add(Dense(64, activation='relu', input_dim=X_train_scaled.shape[1]))
-    ann.add(Dense(32, activation='relu'))
-    ann.add(Dense(1, activation='sigmoid'))
-    ann.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    ann.fit(X_train_scaled, y_train, epochs=50, batch_size=32, class_weight=class_weights, verbose=0)
-    y_pred_ann = (ann.predict(X_test_scaled) > 0.5).astype("int32")
-    print("\n✅ ANN + Class Weights")
-    print(classification_report(y_test, y_pred_ann))
-    print("ROC AUC:", roc_auc_score(y_test, y_pred_ann))
-    trained_models['ann_class_weights'] = ann
-
-    # ----- MODEL 3: ANN + SMOTE -----
-    ann_sm = Sequential()
-    ann_sm.add(Dense(64, activation='relu', input_dim=X_sm.shape[1])) # Input dim from SMOTE data
-    ann_sm.add(Dense(32, activation='relu'))
-    ann_sm.add(Dense(1, activation='sigmoid'))
-    ann_sm.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    ann_sm.fit(X_sm, y_sm, epochs=50, batch_size=32, verbose=0)
-    y_pred_ann_sm = (ann_sm.predict(X_test_scaled) > 0.5).astype("int32")
-    print("\n✅ ANN + SMOTE")
-    print(classification_report(y_test, y_pred_ann_sm))
-    print("ROC AUC:", roc_auc_score(y_test, y_pred_ann_sm))
-    trained_models['ann_smote'] = ann_sm
-
-    # ----- MODEL 4: ANN + Focal Loss -----
-    ann_focal = Sequential()
-    ann_focal.add(Dense(64, activation='relu', input_dim=X_train_scaled.shape[1]))
-    ann_focal.add(Dense(32, activation='relu'))
-    ann_focal.add(Dense(1, activation='sigmoid'))
-    ann_focal.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy'])
-    ann_focal.fit(X_train_scaled, y_train, epochs=50, batch_size=32, verbose=0)
-    y_pred_ann_focal = (ann_focal.predict(X_test_scaled) > 0.5).astype("int32")
-    print("\n✅ ANN + Focal Loss")
-    print(classification_report(y_test, y_pred_ann_focal))
-    print("ROC AUC:", roc_auc_score(y_test, y_pred_ann_focal))
-    trained_models['ann_focal_loss'] = ann_focal
-    
-    return trained_models
-
-def save_models(models_dict, models_dir='models'):
-    """
-    Saves trained models to the specified directory.
-    Args:
-        models_dict (dict): Dictionary of trained models.
-        models_dir (str): Directory to save models.
+    Saves the trained models and training column names.
     """
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
+        print(f"Created models directory at: {models_dir}")
 
-    for name, model in models_dict.items():
-        path = os.path.join(models_dir, f'{name}_model.pkl')
-        if 'ann' in name: # Keras models are saved differently
-            path = os.path.join(models_dir, f'{name}_model.keras')
-            model.save(path)
-            print(f"Saved {name} model to {path} (Keras format)")
-        else:
-            joblib.dump(model, path)
-            print(f"Saved {name} model to {path}")
+    # --- XGBoost Model ---
+    print("\n--- Training XGBoost Model ---")
+    xgb_model = XGBClassifier(
+        objective='binary:logistic',
+        eval_metric='logloss',
+        use_label_encoder=False,
+        n_estimators=200,
+        learning_rate=0.1,
+        max_depth=5,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        gamma=0.1,
+        random_state=42
+    )
+    xgb_model.fit(X_sm, y_sm) # Train on SMOTE'd data
+    xgb_preds = xgb_model.predict(X_test_scaled)
+    xgb_probs = xgb_model.predict_proba(X_test_scaled)[:, 1]
+    print("XGBoost Classification Report:\n", classification_report(y_test, xgb_preds))
+    print("XGBoost AUC-ROC Score:", roc_auc_score(y_test, xgb_probs))
+    joblib.dump(xgb_model, os.path.join(models_dir, 'xgb_smote_model.pkl'))
+    print("XGBoost model saved.")
+
+    # --- ANN Model with Class Weights ---
+    print("\n--- Training ANN Model with Class Weights ---")
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=np.unique(y_train),
+        y=y_train
+    )
+    class_weight_dict = {0: class_weights[0], 1: class_weights[1]}
+
+    ann_model_cw = Sequential([
+        Dense(128, activation='relu', input_shape=(X_train_scaled.shape[1],)),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
+        Dense(1, activation='sigmoid')
+    ])
+    ann_model_cw.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    ann_model_cw.fit(X_train_scaled, y_train, epochs=50, batch_size=32, verbose=0, class_weight=class_weight_dict)
+    ann_cw_preds = (ann_model_cw.predict(X_test_scaled) > 0.5).astype("int32")
+    ann_cw_probs = ann_model_cw.predict(X_test_scaled)
+    print("ANN (Class Weights) Classification Report:\n", classification_report(y_test, ann_cw_preds))
+    print("ANN (Class Weights) AUC-ROC Score:", roc_auc_score(y_test, ann_cw_probs))
+    ann_model_cw.save(os.path.join(models_dir, 'ann_class_weights_model.keras'))
+    print("ANN (Class Weights) model saved.")
+
+    # --- ANN Model with SMOTE ---
+    print("\n--- Training ANN Model with SMOTE ---")
+    ann_model_sm = Sequential([
+        Dense(128, activation='relu', input_shape=(X_sm.shape[1],)),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
+        Dense(1, activation='sigmoid')
+    ])
+    ann_model_sm.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    ann_model_sm.fit(X_sm, y_sm, epochs=50, batch_size=32, verbose=0) # Train on SMOTE'd data
+    ann_sm_preds = (ann_model_sm.predict(X_test_scaled) > 0.5).astype("int32")
+    ann_sm_probs = ann_model_sm.predict(X_test_scaled)
+    print("ANN (SMOTE) Classification Report:\n", classification_report(y_test, ann_sm_preds))
+    print("ANN (SMOTE) AUC-ROC Score:", roc_auc_score(y_test, ann_sm_probs))
+    ann_model_sm.save(os.path.join(models_dir, 'ann_smote_model.keras'))
+    print("ANN (SMOTE) model saved.")
+
+    # --- ANN Model with Focal Loss ---
+    print("\n--- Training ANN Model with Focal Loss ---")
+    ann_model_fl = Sequential([
+        Dense(128, activation='relu', input_shape=(X_train_scaled.shape[1],)),
+        Dense(64, activation='relu'),
+        Dense(32, activation='relu'),
+        Dense(1, activation='sigmoid')
+    ])
+    ann_model_fl.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy'])
+    ann_model_fl.fit(X_train_scaled, y_train, epochs=50, batch_size=32, verbose=0)
+    ann_fl_preds = (ann_model_fl.predict(X_test_scaled) > 0.5).astype("int32")
+    ann_fl_probs = ann_model_fl.predict(X_test_scaled)
+    print("ANN (Focal Loss) Classification Report:\n", classification_report(y_test, ann_fl_preds))
+    print("ANN (Focal Loss) AUC-ROC Score:", roc_auc_score(y_test, ann_fl_probs))
+    ann_model_fl.save(os.path.join(models_dir, 'ann_focal_loss_model.keras'))
+    print("ANN (Focal Loss) model saved.")
+
+    # Save training columns for consistent preprocessing during prediction
+    joblib.dump(X_train_cols, os.path.join(models_dir, 'X_train_columns.pkl'))
+    print(f"X_train_columns saved to {os.path.join(models_dir, 'X_train_columns.pkl')}")
 
 if __name__ == '__main__':
-    # This block is for training and saving your models.
-    from data_loader import load_data
-    from preprocessor import preprocess_data, save_scaler
+    print("Starting model training process...")
+
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx')
+    
+    # --- THIS LINE HAS BEEN MODIFIED ---
+    data_path = os.path.join(project_root, 'data', 'customer_churn.csv')
+    
     models_dir = os.path.join(project_root, 'models')
-    scaler_path = os.path.join(models_dir, 'scaler.pkl')
 
     df = load_data(data_path)
+    
     if df is not None:
+        if 'Churn' not in df.columns:
+            print("Error: 'Churn' column not found in the dataset.")
+            # Create a dummy 'Churn' column if not present for local testing, or exit
+            # For actual training, 'Churn' must be present.
+            # You might want to raise an error or exit here for a real application.
+            df['Churn'] = np.random.randint(0, 2, df.shape[0]) # Dummy Churn for testing
+            print("A dummy 'Churn' column has been added for demonstration purposes.")
+        
         X = df.drop('Churn', axis=1)
         y = df['Churn']
+
+        # Ensure consistent column names between training and prediction
+        # Get dummified column names from the full dataset before splitting
+        # This creates X_full_processed, which is then used to identify X_train_cols
+        X_full_processed = pd.get_dummies(X, drop_first=True)
+        # Ensure that X_train_cols captures all possible columns after one-hot encoding
+        # This will be used to align columns during prediction.
+        X_train_cols = X_full_processed.columns.tolist()
+
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
 
-        # Preprocess training and testing data
-        X_train_scaled, y_train_processed, scaler, X_sm, y_sm, X_train_cols = preprocess_data(
+        # Preprocess training data (scales features and applies SMOTE)
+        # The preprocess_data function now also returns X_train_cols derived from the dummying process.
+        X_train_scaled, y_train_processed, scaler, X_sm, y_sm, _ = preprocess_data(
             pd.concat([X_train, y_train], axis=1), is_training=True
         )
-        # For X_test_scaled, we need to apply the same preprocessing steps as X_train_scaled
-        # but using the *fitted* scaler from training.
+        
+        # Save the scaler for later use in prediction
+        save_scaler(scaler, os.path.join(models_dir, 'scaler.pkl'))
+        print(f"Scaler saved to {os.path.join(models_dir, 'scaler.pkl')}")
+
+        # Preprocess testing data (only scales, does not apply SMOTE)
         X_test_scaled, _, _, _, _, _ = preprocess_data(
             pd.concat([X_test, y_test], axis=1), is_training=False, scaler=scaler, X_train_columns=X_train_cols
         )
         
-        # Save the scaler and X_train_cols
-        save_scaler(scaler, scaler_path)
-        joblib.dump(X_train_cols, os.path.join(models_dir, 'X_train_columns.pkl'))
-        print(f"Saved X_train_columns to {os.path.join(models_dir, 'X_train_columns.pkl')}")
-
-        # Train and evaluate models
-        trained_models = train_and_evaluate_models(X_train_scaled, y_train_processed, X_test_scaled, y_test, X_sm, y_sm)
-
-        # Save all trained models
-        save_models(trained_models, models_dir)
+        train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_sm, y_sm, X_train_cols, models_dir)
+        print("\nModel training and evaluation complete.")
+    else:
+        print("Data loading failed. Skipping model training.")

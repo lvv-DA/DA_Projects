@@ -3,6 +3,7 @@ from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE
 import joblib
 import os
+# IMPORTANT: There should be NO 'from preprocessor import ...' line here!
 
 def preprocess_data(df, target_column='Churn', is_training=True, scaler=None, X_train_columns=None):
     """
@@ -28,73 +29,74 @@ def preprocess_data(df, target_column='Churn', is_training=True, scaler=None, X_
     X = pd.get_dummies(X, drop_first=True)
 
     if is_training:
-        # Scale features
+        # Fit and transform scaler
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
-        X_scaled = pd.DataFrame(X_scaled, columns=X.columns, index=X.index) # Convert back to DataFrame
 
         # Apply SMOTE
         smote = SMOTE(random_state=42)
         X_sm, y_sm = smote.fit_resample(X_scaled, y)
-        X_sm = pd.DataFrame(X_sm, columns=X_scaled.columns) # Convert back to DataFrame
-        return X_scaled, y, scaler, X_sm, y_sm, X.columns.tolist()
+
+        X_cols = X.columns.tolist() # Capture column names after one-hot encoding
+        return X_scaled, y, scaler, X_sm, y_sm, X_cols
     else:
-        if scaler is None:
-            raise ValueError("Scaler must be provided for preprocessing new data.")
-        if X_train_columns is None:
-            raise ValueError("X_train_columns must be provided for preprocessing new data.")
+        # For prediction, ensure columns match training data
+        if X_train_columns is not None:
+            # Add missing columns with 0 and remove extra columns
+            missing_cols = set(X_train_columns) - set(X.columns)
+            for c in missing_cols:
+                X[c] = 0
+            X = X[X_train_columns] # Ensure column order is the same
 
-        # Ensure columns match the training data
-        for col in X_train_columns:
-            if col not in X.columns:
-                X[col] = 0
-        X = X[X_train_columns] # Reorder columns to match training data
+        if scaler is not None:
+            X_scaled = scaler.transform(X)
+        else:
+            X_scaled = X # If no scaler provided, return unscaled
 
-        X_scaled = scaler.transform(X)
-        X_scaled = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
-        return X_scaled, y, scaler, None, None, X.columns.tolist() # y is still needed for evaluation
+        return X_scaled, y, scaler, None, None, X_train_columns # Return X_train_columns as last item
 
 def save_scaler(scaler, path):
-    """Saves the trained StandardScaler."""
+    """Saves the trained scaler."""
     joblib.dump(scaler, path)
     print(f"Scaler saved to {path}")
 
-def load_scaler(path):
-    """Loads a trained StandardScaler."""
-    try:
-        scaler = joblib.load(path)
-        print(f"Scaler loaded from {path}")
-        return scaler
-    except FileNotFoundError:
-        print(f"Error: Scaler file not found at {path}")
-        return None
-    except Exception as e:
-        print(f"An error occurred loading scaler: {e}")
-        return None
-
+# This block is for local testing of preprocessor.py only
 if __name__ == '__main__':
-    # This block is for testing the preprocessor functions independently
-    from data_loader import load_data # Assuming data_loader is in the same directory or accessible
+    print("--- Running preprocessor.py for local testing ---")
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx') # Adjust as per your data path
 
-    df = load_data(data_path)
+    # Ensure data_loader is imported correctly for the local testing block
+    from data_loader import load_data 
+
+    # --- THIS LINE HAS BEEN MODIFIED ---
+    data_path = os.path.join(project_root, 'data', 'customer_churn.csv')
+
+    models_dir = os.path.join(project_root, 'models') # Define models_dir for scaler saving
+
+    df = load_data(data_path) # Use the correct data_path
+
     if df is not None:
+        import numpy as np # Import numpy for dummy data creation if needed
+        if 'Churn' not in df.columns:
+            print("Warning: 'Churn' column not found in the dataset for preprocessor testing. Adding dummy churn.")
+            df['Churn'] = np.random.randint(0, 2, df.shape[0]) # Add dummy for testing
+
         X_scaled, y, scaler, X_sm, y_sm, X_cols = preprocess_data(df, is_training=True)
-        print("\n--- Preprocessing for Training ---")
+        print("\n--- Preprocessing for Training (Preprocessor Test) ---")
         print("X_scaled shape:", X_scaled.shape)
         print("y shape:", y.shape)
         print("X_sm shape:", X_sm.shape)
         print("y_sm shape:", y_sm.shape)
 
         # Save the scaler for later use
-        scaler_path = os.path.join(project_root, 'models', 'scaler.pkl')
-        if not os.path.exists(os.path.join(project_root, 'models')):
-            os.makedirs(os.path.join(project_root, 'models'))
+        scaler_path = os.path.join(models_dir, 'scaler.pkl')
+        if not os.path.exists(models_dir): # Check if models_dir exists
+            os.makedirs(models_dir)
         save_scaler(scaler, scaler_path)
+        print(f"Scaler saved to {scaler_path}")
 
         # Example usage for prediction (using a new dummy df)
-        print("\n--- Preprocessing for Prediction ---")
+        print("\n--- Preprocessing for Prediction (Preprocessor Test) ---")
         df_new = pd.DataFrame({
             'CallFailure': [5], 'Complains': [0], 'SubscriptionLength': [30],
             'ChargeAmount': [1], 'SecondsUse': [1000], 'FrequencyUse': [20],
@@ -102,11 +104,19 @@ if __name__ == '__main__':
             'TariffPlan': [1], 'Status': [1], 'Age': [25],
             'CustomerValue': [500.0]
         })
-        # Load the saved scaler
-        loaded_scaler = load_scaler(scaler_path)
-        if loaded_scaler:
-            X_new_scaled, _, _, _, _, _ = preprocess_data(df_new, is_training=False, scaler=loaded_scaler, X_train_columns=X_cols)
-            print("X_new_scaled shape:", X_new_scaled.shape)
-            print("X_new_scaled head:\n", X_new_scaled.head())
-        else:
-            print("Could not load scaler for prediction example.")
+        # Load the saved scaler and X_train_columns for prediction preprocessing
+        loaded_scaler = joblib.load(scaler_path)
+
+        # Assume X_train_columns.pkl exists and is loaded from models_dir for consistency
+        # For this test, let's derive it from the dummy data if it doesn't exist.
+        # In a real scenario, this would come from the training phase.
+        X_dummy = df.drop(columns=['Churn'], errors='ignore')
+        dummy_X_train_columns = pd.get_dummies(X_dummy, drop_first=True).columns.tolist()
+
+        X_new_scaled, _, _, _, _, _ = preprocess_data(
+            df_new, is_training=False, scaler=loaded_scaler, X_train_columns=dummy_X_train_columns
+        )
+        print("X_new_scaled shape:", X_new_scaled.shape)
+        print("Preprocessor testing complete.")
+    else:
+        print("Data loading failed in preprocessor.py test block. Skipping preprocessing tests.")

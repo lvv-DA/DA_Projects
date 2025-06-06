@@ -10,15 +10,30 @@ def load_data(data_path):
         pd.DataFrame: The loaded DataFrame.
     """
     try:
-        # Changed from pd.read_excel to pd.read_csv
-        df = pd.read_csv(data_path)
+        # Try reading with a common alternative encoding like 'latin1'
+        df = pd.read_csv(data_path, encoding='latin1')
         print("Data loaded successfully.")
         return df
     except FileNotFoundError:
         print(f"Error: Data file not found at {data_path}")
         return None
+    except UnicodeDecodeError:
+        print(f"Error: Could not decode data from {data_path} with 'latin1' encoding. Trying 'ISO-8859-1'...")
+        try:
+            df = pd.read_csv(data_path, encoding='ISO-8859-1')
+            print("Data loaded successfully with 'ISO-8859-1' encoding.")
+            return df
+        except UnicodeDecodeError:
+            print(f"Error: Could not decode data from {data_path} with 'ISO-8859-1' encoding. Trying 'cp1252'...")
+            try:
+                df = pd.read_csv(data_path, encoding='cp1252')
+                print("Data loaded successfully with 'cp1252' encoding.")
+                return df
+            except Exception as e:
+                print(f"Final attempt failed. An error occurred while loading data with multiple encodings: {e}")
+                return None
     except Exception as e:
-        print(f"An error occurred while loading data: {e}")
+        print(f"An unexpected error occurred while loading data: {e}")
         return None
 
 if __name__ == '__main__':
@@ -41,7 +56,8 @@ if __name__ == '__main__':
             'TariffPlan': [1,2,1], 'Status': [1,1,1], 'Age': [30,45,28],
             'CustomerValue': [150.0, 200.0, 180.0], 'Churn': [0, 1, 0]
         })
-        dummy_df.to_csv(dummy_data_path, index=False)
+        # Save with latin1 for testing this specific fix
+        dummy_df.to_csv(dummy_data_path, index=False, encoding='latin1')
         print(f"Created dummy CSV file at {dummy_data_path}")
 
     df_test = load_data(dummy_data_path)
