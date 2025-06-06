@@ -31,7 +31,7 @@ def load_all_models(): # Removed models_dir argument; path calculated internally
     current_script_dir = os.path.dirname(os.path.abspath(__file__)) # This is '.../churn_prediction_app/src'
     project_root = os.path.dirname(current_script_dir) # This is '.../churn_prediction_app'
     models_dir = os.path.join(project_root, 'models')
-    
+
     # Ensure models directory exists
     if not os.path.exists(models_dir):
         print(f"Error: Models directory not found at {models_dir}. Please ensure it exists.")
@@ -80,7 +80,7 @@ def load_all_models(): # Removed models_dir argument; path calculated internally
         except Exception as e:
             print(f"An error occurred loading {name} model: {e}")
             loaded_assets[name] = None
-            
+
     # Load X_train_columns
     x_train_columns_path = os.path.join(models_dir, 'X_train_columns.pkl')
     try:
@@ -147,7 +147,7 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', ge
         customer_data = df_input.iloc[0].to_dict() if not df_input.empty else {}
         churn_prediction = "Likely to Churn" if preds[0] == 1 else "Unlikely to Churn"
         churn_probability = probs[0] * 100
-        
+
         prompt = (
             f"A customer with the following profile has been predicted as '{churn_prediction}' "
             f"with a probability of {churn_probability:.2f}%. "
