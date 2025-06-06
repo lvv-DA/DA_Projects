@@ -18,15 +18,24 @@ def focal_loss(gamma=2., alpha=.25):
                -K.sum((1 - alpha) * K.pow(pt_0, gamma) * K.log(1. - pt_0))
     return focal_loss_fixed
 
-def load_all_models(models_dir='models'):
+def load_all_models(): # Removed models_dir argument; path calculated internally
     """
-    Loads all trained models and the scaler.
-    Args:
-        models_dir (str): Directory where models and scaler are saved.
+    Loads all trained models, the scaler, and training columns.
     Returns:
-        dict: A dictionary containing loaded models and the scaler.
+        dict: A dictionary containing loaded assets.
     """
     loaded_assets = {}
+
+    # Calculate the correct path to the models directory
+    # Assumes model_predictor.py is in 'src/' and 'models/' is parallel to 'src/'
+    current_script_dir = os.path.dirname(os.path.abspath(__file__)) # This is '.../churn_prediction_app/src'
+    project_root = os.path.dirname(current_script_dir) # This is '.../churn_prediction_app'
+    models_dir = os.path.join(project_root, 'models')
+    
+    # Ensure models directory exists
+    if not os.path.exists(models_dir):
+        print(f"Error: Models directory not found at {models_dir}. Please ensure it exists.")
+        return loaded_assets # Return empty if directory is not found
 
     # Load scaler
     scaler_path = os.path.join(models_dir, 'scaler.pkl')
@@ -53,7 +62,7 @@ def load_all_models(models_dir='models'):
         loaded_assets['xgb_smote'] = None
 
     # Load Keras models (need custom_objects for focal_loss)
-    custom_objects = {'focal_loss_fixed': focal_loss()} # Only if focal_loss is used
+    custom_objects = {'focal_loss_fixed': focal_loss()}
     keras_models = {
         'ann_class_weights': 'ann_class_weights_model.keras',
         'ann_smote': 'ann_smote_model.keras',
@@ -62,11 +71,6 @@ def load_all_models(models_dir='models'):
     for name, filename in keras_models.items():
         model_path = os.path.join(models_dir, filename)
         try:
-            # compile=False is often used for prediction to avoid recompilation overhead
-            # and potential issues with custom objects if not strictly needed for prediction logic.
-            # However, if focal_loss is part of the model graph that needs to be active for prediction,
-            # you might need to compile=True and provide custom_objects.
-            # For simplicity, we'll try with compile=False first.
             loaded_model = load_model(model_path, custom_objects=custom_objects if name == 'ann_focal_loss' else None, compile=False)
             loaded_assets[name] = loaded_model
             print(f"{name.replace('_', ' ').title()} model loaded from {model_path}")
@@ -77,6 +81,18 @@ def load_all_models(models_dir='models'):
             print(f"An error occurred loading {name} model: {e}")
             loaded_assets[name] = None
             
+    # Load X_train_columns
+    x_train_columns_path = os.path.join(models_dir, 'X_train_columns.pkl')
+    try:
+        loaded_assets['X_train_columns'] = joblib.load(x_train_columns_path)
+        print(f"X_train_columns loaded from {x_train_columns_path}")
+    except FileNotFoundError:
+        print(f"Error: X_train_columns file not found at {x_train_columns_path}")
+        loaded_assets['X_train_columns'] = None
+    except Exception as e:
+        print(f"An error occurred loading X_train_columns: {e}")
+        loaded_assets['X_train_columns'] = None
+
     return loaded_assets
 
 
@@ -98,6 +114,12 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', ge
     """
     if model is None:
         print(f"Error: Model is not loaded for type {model_type}.")
+        return np.array([]), np.array([]), None
+    if scaler is None:
+        print("Error: Scaler is not loaded.")
+        return np.array([]), np.array([]), None
+    if X_train_columns is None:
+        print("Error: X_train_columns is not loaded.")
         return np.array([]), np.array([]), None
 
     # Ensure input matches training columns (handle dummy variables, missing columns)
@@ -122,7 +144,6 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', ge
 
     recommendations = None
     if gemini_model is not None and len(preds) > 0:
-        # Assuming you're predicting for a single customer for simplicity in Streamlit app
         customer_data = df_input.iloc[0].to_dict() if not df_input.empty else {}
         churn_prediction = "Likely to Churn" if preds[0] == 1 else "Unlikely to Churn"
         churn_probability = probs[0] * 100
@@ -136,8 +157,6 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', ge
             "Suggest concrete steps, considering the customer's attributes."
         )
         try:
-            # For a production app, consider using genai.ChatSession or more structured prompts
-            # For now, a direct generate_content call will suffice.
             ai_response = gemini_model.generate_content(prompt)
             recommendations = ai_response.text
         except Exception as e:
@@ -147,7 +166,7 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', ge
     return preds, probs, recommendations
 
 if __name__ == '__main__':
-    from preprocessor import preprocess_data # Import preprocess_data
+    from preprocessor import preprocess_data
     # Dummy data for demonstration
     df_new_single = pd.DataFrame({
         'CallFailure': [5], 'Complains': [0], 'SubscriptionLength': [30],
@@ -158,7 +177,8 @@ if __name__ == '__main__':
     })
 
     # Adjust project_root for script execution context
-    project_root = os.path.dirname(os.path.abspath(__file__))
+    current_script_dir = os.path.dirname(os.path.abspath(__file__)) # .../churn_prediction_app/src
+    project_root = os.path.dirname(current_script_dir) # .../churn_prediction_app
     models_dir = os.path.join(project_root, 'models')
 
     # Ensure models directory exists
@@ -167,24 +187,19 @@ if __name__ == '__main__':
         exit()
 
     # Load all models and scaler
-    loaded_assets = load_all_models(models_dir)
+    loaded_assets = load_all_models() # No need to pass models_dir here, it calculates it internally
     xgb_model = loaded_assets.get('xgb_smote')
-    ann_model = loaded_assets.get('ann_class_weights') # Or 'ann_smote', 'ann_focal_loss'
+    ann_model = loaded_assets.get('ann_class_weights')
+    ann_sm_model = loaded_assets.get('ann_smote')
+    ann_focal_model = loaded_assets.get('ann_focal_loss')
     scaler = loaded_assets.get('scaler')
+    X_train_columns = loaded_assets.get('X_train_columns') # Get X_train_columns from loaded assets
 
-    # Dummy X_train_columns for demonstration (in a real scenario, these would be saved/loaded)
-    # This list must precisely match the columns the model was trained on AFTER get_dummies.
-    # For robust production, save these from model_trainer.py
-    X_train_columns = ['CallFailure', 'Complains', 'SubscriptionLength', 'ChargeAmount',
-                       'SecondsUse', 'FrequencyUse', 'FrequencySMS', 'DistinctCalls',
-                       'AgeGroup', 'TariffPlan', 'Status', 'Age', 'CustomerValue'] # Example, update with actual trained columns
-
-    if xgb_model and scaler:
+    if xgb_model and scaler and X_train_columns: # Added X_train_columns to condition
         # Initialize Gemini model (if API key is available)
         try:
-            # Assuming GEMINI_API_KEY is an environment variable for local testing
-            genai.configure(api_key=os.getenv("GEMINI_API_KEY")) # Ensure your API key is set
-            gemini_model = genai.GenerativeModel('gemini-1.5-flash')  # Use gemini-1.5-flash
+            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+            gemini_model = genai.GenerativeModel('gemini-1.5-flash')
         except Exception as e:
             print(f"Gemini API initialization failed: {e}. AI recommendations will be unavailable.")
             gemini_model = None
@@ -202,8 +217,8 @@ if __name__ == '__main__':
         print(f"ANN + SMOTE Prediction: {ann_sm_preds[0]}, Probability: {ann_sm_probs[0]:.4f}, Recommendations: {ann_sm_recs}")
 
         # Predict with ANN + Focal Loss
-        ann_fl_preds, ann_fl_probs, ann_fl_recs = predict_churn(ann_focal_loss_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
+        ann_fl_preds, ann_fl_probs, ann_fl_recs = predict_churn(ann_focal_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
         print(f"ANN + Focal Loss Prediction: {ann_fl_preds[0]}, Probability: {ann_fl_probs[0]:.4f}, Recommendations: {ann_fl_recs}")
 
     else:
-        print("Models or scaler not loaded. Cannot perform prediction.")
+        print("Models, scaler, or training columns not loaded. Cannot perform prediction.")
