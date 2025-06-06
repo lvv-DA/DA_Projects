@@ -13,7 +13,7 @@ plotly
 
 # Streamlit and related utilities
 streamlit
-st_copy_to_clipboard
+ st-copy-to-clipboard
 
 # Google Generative AI
 google-generativeai
