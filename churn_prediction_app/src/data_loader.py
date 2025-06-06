@@ -26,9 +26,9 @@ if __name__ == '__main__':
     # You would typically have a config.py to define DATA_PATH
     # For now, let's assume it's in the parent directory
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dummy_data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx') # Adjust as per your actual data path
+    dummy_data_path = os.path.join(project_root, 'data', 'customer_churn.csv') # Adjust as per your actual data path
 
-    # Create a dummy Excel file for testing if it doesn't exist
+    # Create a dummy CSV file for testing if it doesn't exist
     if not os.path.exists(os.path.join(project_root, 'data')):
         os.makedirs(os.path.join(project_root, 'data'))
     if not os.path.exists(dummy_data_path):
@@ -39,7 +39,7 @@ if __name__ == '__main__':
             'TariffPlan': [1,1,1], 'Status': [1,1,1], 'Age': [30,25,40],
             'CustomerValue': [1000.0, 50.0, 750.0], 'Churn': [0, 0, 1]
         })
-        dummy_df.to_excel(dummy_data_path, index=False)
+        dummy_df.to_csv(dummy_data_path, index=False)
         print(f"Dummy data created at {dummy_data_path}")
 
     df = load_data(dummy_data_path)

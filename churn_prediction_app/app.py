@@ -246,7 +246,8 @@ st.markdown(f"""
 def get_model_assets():
     """Loads all models and scaler, and returns the training columns."""
     models_dir = os.path.join(project_root, 'models')
-    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx')
+    # --- MODIFIED LINE HERE ---
+    data_path = os.path.join(project_root, 'data', 'customer_churn.csv')
 
     loaded_assets = load_all_models(models_dir)
 
@@ -579,6 +580,7 @@ with st.form("customer_details_form"):
 
         # --- Ensemble Voting ---
         churn_votes = sum(ensemble_predictions) # Count how many models predicted churn
+        no_churn_votes = len(ENSEMBLE_MODELS) - churn_votes
 
         st.subheader("Ensemble Consensus:")
         # Modified logic: If any model predicts churn, the ensemble predicts churn
@@ -610,7 +612,7 @@ with st.form("customer_details_form"):
 
         # --- Ensemble Vote Distribution Graph ---
         st.subheader("Ensemble Vote Distribution")
-        no_churn_votes = len(ENSEMBLE_MODELS) - churn_votes
+        
         vote_data = pd.DataFrame({
             'Vote': ['Models Predicting Churn', 'Models Predicting No Churn'],
             'Count': [churn_votes, no_churn_votes]
