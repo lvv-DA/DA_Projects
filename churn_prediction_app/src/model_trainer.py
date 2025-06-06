@@ -43,7 +43,7 @@ def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_
     xgb = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
     xgb.fit(X_sm, y_sm)
     y_pred_xgb = xgb.predict(X_test_scaled) # Predict on scaled X_test
-    print("\n🎯 XGBoost + SMOTE")
+    print("\n✅ XGBoost + SMOTE")
     print(classification_report(y_test, y_pred_xgb))
     print("ROC AUC:", roc_auc_score(y_test, y_pred_xgb))
     trained_models['xgb_smote'] = xgb
@@ -60,7 +60,7 @@ def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_
     ann.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     ann.fit(X_train_scaled, y_train, epochs=50, batch_size=32, class_weight=class_weights, verbose=0)
     y_pred_ann = (ann.predict(X_test_scaled) > 0.5).astype("int32")
-    print("\n🤖 ANN + Class Weights")
+    print("\n✅ ANN + Class Weights")
     print(classification_report(y_test, y_pred_ann))
     print("ROC AUC:", roc_auc_score(y_test, y_pred_ann))
     trained_models['ann_class_weights'] = ann
@@ -73,7 +73,7 @@ def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_
     ann_sm.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     ann_sm.fit(X_sm, y_sm, epochs=50, batch_size=32, verbose=0)
     y_pred_ann_sm = (ann_sm.predict(X_test_scaled) > 0.5).astype("int32")
-    print("\n🔁 ANN + SMOTE")
+    print("\n✅ ANN + SMOTE")
     print(classification_report(y_test, y_pred_ann_sm))
     print("ROC AUC:", roc_auc_score(y_test, y_pred_ann_sm))
     trained_models['ann_smote'] = ann_sm
@@ -85,27 +85,36 @@ def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_
     ann_focal.add(Dense(1, activation='sigmoid'))
     ann_focal.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy'])
     ann_focal.fit(X_train_scaled, y_train, epochs=50, batch_size=32, verbose=0)
-    y_pred_focal = (ann_focal.predict(X_test_scaled) > 0.5).astype("int32")
-    print("\n🔥 ANN + Focal Loss")
-    print(classification_report(y_test, y_pred_focal))
-    print("ROC AUC:", roc_auc_score(y_test, y_pred_focal))
+    y_pred_ann_focal = (ann_focal.predict(X_test_scaled) > 0.5).astype("int32")
+    print("\n✅ ANN + Focal Loss")
+    print(classification_report(y_test, y_pred_ann_focal))
+    print("ROC AUC:", roc_auc_score(y_test, y_pred_ann_focal))
     trained_models['ann_focal_loss'] = ann_focal
-
+    
     return trained_models
 
-def save_models(models, models_dir='models'):
-    """Saves trained models to the specified directory."""
-    os.makedirs(models_dir, exist_ok=True)
-    for name, model in models.items():
-        if 'xgb' in name:
-            joblib.dump(model, os.path.join(models_dir, f'{name}_model.pkl'))
-        elif 'ann' in name:
-            model.save(os.path.join(models_dir, f'{name}_model.keras'))
-        print(f"Model '{name}' saved.")
+def save_models(models_dict, models_dir='models'):
+    """
+    Saves trained models to the specified directory.
+    Args:
+        models_dict (dict): Dictionary of trained models.
+        models_dir (str): Directory to save models.
+    """
+    if not os.path.exists(models_dir):
+        os.makedirs(models_dir)
+
+    for name, model in models_dict.items():
+        path = os.path.join(models_dir, f'{name}_model.pkl')
+        if 'ann' in name: # Keras models are saved differently
+            path = os.path.join(models_dir, f'{name}_model.keras')
+            model.save(path)
+            print(f"Saved {name} model to {path} (Keras format)")
+        else:
+            joblib.dump(model, path)
+            print(f"Saved {name} model to {path}")
 
 if __name__ == '__main__':
-    # Example usage:
-    # This part would typically be run once to train and save your models.
+    # This block is for training and saving your models.
     from data_loader import load_data
     from preprocessor import preprocess_data, save_scaler
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -128,14 +137,14 @@ if __name__ == '__main__':
         X_test_scaled, _, _, _, _, _ = preprocess_data(
             pd.concat([X_test, y_test], axis=1), is_training=False, scaler=scaler, X_train_columns=X_train_cols
         )
-
-        # Save the scaler
+        
+        # Save the scaler and X_train_cols
         save_scaler(scaler, scaler_path)
+        joblib.dump(X_train_cols, os.path.join(models_dir, 'X_train_columns.pkl'))
+        print(f"Saved X_train_columns to {os.path.join(models_dir, 'X_train_columns.pkl')}")
 
-        # Train and evaluate
-        trained_models = train_and_evaluate_models(
-            X_train_scaled, y_train, X_test_scaled, y_test, X_sm, y_sm
-        )
+        # Train and evaluate models
+        trained_models = train_and_evaluate_models(X_train_scaled, y_train_processed, X_test_scaled, y_test, X_sm, y_sm)
 
         # Save all trained models
         save_models(trained_models, models_dir)

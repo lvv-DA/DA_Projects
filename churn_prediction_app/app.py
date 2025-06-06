@@ -5,8 +5,11 @@ import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
+import plotly.express as px
 import time
 import google.generativeai as genai
+# Import K from tf_keras.backend to use K.clear_session()
+from tf_keras import backend as K
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # This hides all GPUs from TensorFlow
@@ -31,6 +34,8 @@ st.set_page_config(
 
 st.success("Application started and dependencies checked.")
 st.write("Ready to predict customer churn!")
+
+
 
 # --- Configure Google Gemini API ---
 # It's highly recommended to store API keys in Streamlit Secrets:
@@ -206,7 +211,7 @@ Provide 3-5 concise, actionable recommendations for the CSR, including relevant 
         response_placeholder = st.empty() # Create a placeholder for streaming text
         
         with st.spinner(f"Getting AI-powered recommendations from {company_name}'s Gemini assistant... (This may take a moment)"):
-            response = gemini_model_instance.generate_content( # <--- CORRECTED: Using the passed instance
+            response = gemini_model_instance.generate_content(
                 contents=[
                     {"role": "user", "parts": [system_prompt, user_prompt]}
                 ],
@@ -350,10 +355,8 @@ if 'performed_search_with_button' not in st.session_state:
 if 'selected_customer_label' not in st.session_state:
     st.session_state['selected_customer_label'] = None
 
-
 # --- Customer Search Section ---
 st.header("Search for an Existing Customer 🔎")
-
 if all_customers_df is not None:
     search_query_input = st.text_input(
         "Enter Customer Name, ID, or Phone Number to search:",
@@ -383,7 +386,7 @@ if all_customers_df is not None:
                 for idx, row in search_results.iterrows():
                     address_info = f" | Address: {row.get('Address', 'N/A')}" if 'Address' in row and pd.notna(row.get('Address')) else ""
                     display_options.append(f"ID: {row['CustomerID']} | Name: {row['CustomerName']} | Phone: {row['PhoneNumber']}{address_info}")
-
+                
                 st.session_state['search_results_display'] = display_options
                 st.session_state['search_results_data'] = search_results
                 st.session_state['show_search_results'] = True
@@ -406,346 +409,241 @@ if all_customers_df is not None:
         def on_customer_select():
             selected_option_label = st.session_state[f"customer_select_radio_{st.session_state['last_search_query']}"]
             st.session_state['selected_customer_label'] = selected_option_label
-
+            
             # Extract CustomerID from the selected label
             selected_customer_id_from_label = selected_option_label.split(' | ')[0].replace('ID: ', '')
-
-            selected_customer_row_filtered = st.session_state['search_results_data'][
+            
+            # Find the full customer data based on the extracted ID
+            selected_customer_row = st.session_state['search_results_data'][
                 st.session_state['search_results_data']['CustomerID'] == selected_customer_id_from_label
-            ]
+            ].iloc[0]
 
-            if not selected_customer_row_filtered.empty:
-                selected_customer_row = selected_customer_row_filtered.iloc[0]
+            # Update session state with the selected customer's details
+            for col in default_values.keys():
+                if col in selected_customer_row:
+                    # Convert to appropriate type if necessary (e.g., int for numerical inputs)
+                    if isinstance(default_values[col], int):
+                        st.session_state[col] = int(selected_customer_row[col])
+                    elif isinstance(default_values[col], float):
+                        st.session_state[col] = float(selected_customer_row[col])
+                    else:
+                        st.session_state[col] = selected_customer_row[col]
+                else:
+                    st.session_state[col] = default_values[col] # Fallback to default if column not found
 
-                mapping_dicts = {
-                    'Complains': COMPLAINS_OPTIONS,
-                    'ChargeAmount': CHARGE_AMOUNT_OPTIONS,
-                    'AgeGroup': AGE_GROUP_OPTIONS,
-                    'TariffPlan': TARIFF_PLAN_OPTIONS,
-                    'Status': STATUS_OPTIONS
-                }
+            # Update dropdown/radio selections
+            st.session_state['Complains_selected'] = [k for k, v in COMPLAINS_OPTIONS.items() if v == st.session_state['Complains']][0]
+            st.session_state['ChargeAmount_selected'] = [k for k, v in CHARGE_AMOUNT_OPTIONS.items() if v == st.session_state['ChargeAmount']][0]
+            st.session_state['AgeGroup_selected'] = [k for k, v in AGE_GROUP_OPTIONS.items() if v == st.session_state['AgeGroup']][0]
+            st.session_state['TariffPlan_selected'] = [k for k, v in TARIFF_PLAN_OPTIONS.items() if v == st.session_state['TariffPlan']][0]
+            st.session_state['Status_selected'] = [k for k, v in STATUS_OPTIONS.items() if v == st.session_state['Status']][0]
+            
+            st.success(f"Details for Customer ID: {selected_customer_id_from_label} loaded into input fields.")
 
-                for feature, default_val in default_values.items():
-                    if feature in selected_customer_row and pd.notna(selected_customer_row[feature]):
-                        if feature in mapping_dicts:
-                            value_from_data = selected_customer_row[feature]
-                            found_label = None
-                            for key, val in mapping_dicts[feature].items():
-                                if val == value_from_data:
-                                    found_label = key
-                                    break
-                            
-                            if found_label:
-                                # For selectboxes, we want to store the *value* in session_state,
-                                # and the selectbox itself will find its label based on that value.
-                                st.session_state[feature] = mapping_dicts[feature][found_label]
-                            else:
-                                st.warning(f"Value '{value_from_data}' for '{feature}' not found in options. Falling back to default.")
-                                st.session_state[feature] = default_val
-                        else: # For numerical inputs directly use the value
-                            try:
-                                target_type = type(default_val)
-                                st.session_state[feature] = target_type(selected_customer_row[feature])
-                            except (ValueError, TypeError):
-                                st.warning(f"Could not convert value '{selected_customer_row[feature]}' for '{feature}'. Falling back to default.")
-                                st.session_state[feature] = default_val
-                    else: # If feature not in data or is NaN, fall back to default
-                        st.session_state[feature] = default_val
-
-                st.success(f"Details for Customer ID {selected_customer_row.get('CustomerID', 'N/A')} ({selected_customer_row.get('CustomerName', 'N/A')}) loaded!")
-                st.rerun() # Rerun to update input fields with new session state values
-            else:
-                st.error("Selected customer data not found in search results. Please try again.")
-
-        default_index = None
-        if st.session_state['selected_customer_label'] in st.session_state['search_results_display']:
-            default_index = st.session_state['search_results_display'].index(st.session_state['selected_customer_label'])
-
-        st.radio(
-            "Select a customer to auto-fill details:",
+        selected_option = st.radio(
+            "Select a customer from the results:",
             st.session_state['search_results_display'],
-            index=default_index,
             key=f"customer_select_radio_{st.session_state['last_search_query']}",
             on_change=on_customer_select
         )
-    elif st.session_state['performed_search_with_button'] and not st.session_state['search_results_display']:
-        st.info(f"No customers found for your last search: '{st.session_state['last_search_query']}'.")
-    else:
-        st.info("Enter a query in the search bar and click 'Search' to find customers.")
-
-else:
-    st.warning("Customer data not available for search. Please ensure 'customer_data_with_identifiers.csv' is in your `/data/` folder.")
+        
+        if st.session_state['selected_customer_label'] == selected_option and selected_option:
+            st.write(f"Currently selected: **{selected_option}**")
 
 
-# --- Define Mappings for Selectboxes ---
-# Used for getting the index for selectbox
-def get_selectbox_index(option_dict, current_value, default_value):
-    """Helper to find the index for st.selectbox."""
-    try:
-        # Find the key (label) corresponding to the current value
-        current_label = next(key for key, val in option_dict.items() if val == current_value)
-        return list(option_dict.keys()).index(current_label)
-    except StopIteration:
-        # If the current_value from session_state is not in the options, fall back to default's index
-        st.warning(f"Value '{current_value}' not found in options for selectbox. Resetting to default.")
-        # Find the label for the default value to set the index
-        default_label = next(key for key, val in option_dict.items() if val == default_value)
-        return list(option_dict.keys()).index(default_label)
-
-
-# --- Customer Details for Prediction ---
-st.header("Customer Details for Prediction 📝")
-st.markdown("**(Auto-filled if customer searched, or enter manually)**")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.number_input(
-        "Call Failure (Number of failed calls)",
-        min_value=0, max_value=50,
-        value=st.session_state['CallFailure'],
-        key="CallFailure"
-    )
-    st.number_input(
-        "Subscription Length (months)",
-        min_value=0, max_value=100,
-        value=st.session_state['SubscriptionLength'],
-        key="SubscriptionLength"
-    )
-    st.number_input(
-        "Seconds Use (total seconds in past year)",
-        min_value=0, max_value=20000,
-        value=st.session_state['SecondsUse'],
-        key="SecondsUse"
-    )
-    st.number_input(
-        "Distinct Calls (number of distinct numbers called in past year)",
-        min_value=0, max_value=100,
-        value=st.session_state['DistinctCalls'],
-        key="DistinctCalls"
-    )
-
-    selected_tariff_label = st.selectbox(
-        "Tariff Plan",
-        options=list(TARIFF_PLAN_OPTIONS.keys()),
-        index=get_selectbox_index(TARIFF_PLAN_OPTIONS, st.session_state['TariffPlan'], default_values['TariffPlan']),
-        key="TariffPlan_selectbox"
-    )
-    # Update session state with the numerical value from the selected label
-    st.session_state['TariffPlan'] = TARIFF_PLAN_OPTIONS[selected_tariff_label]
-
-
-with col2:
-    selected_complains_label = st.selectbox(
-        "Complains (Has the customer filed a complaint?)",
-        options=list(COMPLAINS_OPTIONS.keys()),
-        index=get_selectbox_index(COMPLAINS_OPTIONS, st.session_state['Complains'], default_values['Complains']),
-        key="Complains_selectbox"
-    )
-    st.session_state['Complains'] = COMPLAINS_OPTIONS[selected_complains_label]
-
-    selected_charge_label = st.selectbox(
-        "Charge Amount (Categorical)",
-        options=list(CHARGE_AMOUNT_OPTIONS.keys()),
-        index=get_selectbox_index(CHARGE_AMOUNT_OPTIONS, st.session_state['ChargeAmount'], default_values['ChargeAmount']),
-        key="ChargeAmount_selectbox"
-    )
-    st.session_state['ChargeAmount'] = CHARGE_AMOUNT_OPTIONS[selected_charge_label]
-
-    st.number_input(
-        "Frequency Use (total calls in past year)",
-        min_value=0, max_value=200,
-        value=st.session_state['FrequencyUse'],
-        key="FrequencyUse"
-    )
-
-    selected_age_group_label = st.selectbox(
-        "Age Group Category",
-        options=list(AGE_GROUP_OPTIONS.keys()),
-        index=get_selectbox_index(AGE_GROUP_OPTIONS, st.session_state['AgeGroup'], default_values['AgeGroup']),
-        key="AgeGroup_selectbox"
-    )
-    st.session_state['AgeGroup'] = AGE_GROUP_OPTIONS[selected_age_group_label]
-
-    st.number_input(
-        "Age (Customer age)",
-        min_value=15, max_value=90,
-        value=st.session_state['Age'],
-        key="Age"
-    )
-
-
-with col3:
-    st.number_input(
-        "Frequency SMS (total SMS in past year)",
-        min_value=0, max_value=500,
-        value=st.session_state['FrequencySMS'],
-        key="FrequencySMS"
-    )
-
-    selected_status_label = st.selectbox(
-        "Status",
-        options=list(STATUS_OPTIONS.keys()),
-        index=get_selectbox_index(STATUS_OPTIONS, st.session_state['Status'], default_values['Status']),
-        key="Status_selectbox"
-    )
-    st.session_state['Status'] = STATUS_OPTIONS[selected_status_label]
-
-    st.number_input(
-        "Customer Value (projected for next year)",
-        min_value=0.0, max_value=5000.0,
-        format="%.2f",
-        value=st.session_state['CustomerValue'],
-        key="CustomerValue"
-    )
-
-# Collect inputs into a DataFrame from session state
-input_data = pd.DataFrame({k: [st.session_state[k]] for k in default_values.keys()})
-
-
-st.subheader("Ensemble Prediction Results 📈")
-
-if st.button("Predict Churn with Ensemble"):
-    if not all([m['model'] for m in ENSEMBLE_MODELS.values()]):
-        st.error("One or more ensemble models could not be loaded. Cannot make prediction. Please check your model files.")
-    else:
-        with st.spinner("Making predictions with the ensemble models..."):
-            individual_predictions = []
-            individual_probabilities = []
-
-            for model_name, model_info in ENSEMBLE_MODELS.items():
-                model = model_info['model']
-                model_type = model_info['type']
-
-                # Capture all return values, even if recommendations is None
-                prediction, probability, _ = predict_churn(
-                    model,
-                    input_data,
-                    scaler,
-                    X_train_columns,
-                    model_type
-                )
-                individual_predictions.append(prediction[0])
-                individual_probabilities.append(probability[0])
-
-            churn_votes = sum(individual_predictions)
-            no_churn_votes = len(individual_predictions) - churn_votes
-
-            # --- Visualizations ---
-            vis_col1, vis_col2 = st.columns(2)
-
-            with vis_col1:
-                st.markdown("##### Individual Model Churn Probabilities")
-                fig, ax = plt.subplots(figsize=(8, 5))
-                probabilities_df = pd.DataFrame({
-                    'Model': list(ENSEMBLE_MODELS.keys()),
-                    'Probability': individual_probabilities
-                })
-                sns.barplot(x='Probability', y='Model', data=probabilities_df, palette='viridis', ax=ax)
-                ax.set_xlim(0, 1)
-                ax.set_xlabel("Churn Probability")
-                ax.set_title("Individual Model Churn Probabilities")
-
-                for index, row in probabilities_df.iterrows():
-                    ax.text(row.Probability + 0.02, index, f'{row.Probability:.1%}', color='white', ha="left", va="center", fontsize=10)
-
-                fig.patch.set_facecolor('#1E2130')
-                ax.set_facecolor('#1E2130')
-                ax.tick_params(axis='x', colors='white')
-                ax.tick_params(axis='y', colors='white')
-                ax.yaxis.label.set_color('white')
-                ax.xaxis.label.set_color('white')
-                ax.title.set_color('white')
-                ax.spines['bottom'].set_color('white')
-                ax.spines['left'].set_color('white')
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-
-                st.pyplot(fig)
-                plt.close(fig)
-
-            with vis_col2:
-                st.markdown("##### Ensemble Churn Likelihood")
-                ensemble_avg_prob = sum(individual_probabilities) / len(individual_probabilities)
-
-                fig_gauge = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=ensemble_avg_prob * 100,
-                    domain={'x': [0, 1], 'y': [0, 1]},
-                    title={'text': "Ensemble Churn Probability", 'font': {'size': 20, 'color': 'white'}},
-                    gauge={
-                        'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-                        'bar': {'color': "#FF4B4B"},
-                        'bgcolor': "white",
-                        'borderwidth': 2,
-                        'bordercolor': "gray",
-                        'steps': [
-                            {'range': [0, 20], 'color': 'lightgreen'},
-                            {'range': [20, 50], 'color': 'yellow'},
-                            {'range': [50, 100], 'color': 'red'}],
-                        'threshold': {
-                            'line': {'color': "black", 'width': 4},
-                            'thickness': 0.75,
-                            'value': ensemble_avg_prob * 100}
-                    }
-                ))
-                fig_gauge.update_layout(height=250, margin=dict(l=10, r=10, t=50, b=10),
-                                         paper_bgcolor="#1E2130",
-                                         font = {'color': "white", 'family': "Arial"})
-                st.plotly_chart(fig_gauge, use_container_width=True)
-
-
-            st.subheader("Ensemble Decision (Majority Vote)")
-            
-            # Prepare customer details for the LLM
-            customer_details_for_llm = ""
-            # Iterate through the input_data (which is a DataFrame with one row)
-            # Use .iloc[0].to_dict() to get a dictionary of the input features
-            for k, v in input_data.iloc[0].to_dict().items():
-                if k == 'Complains':
-                    customer_details_for_llm += f"- Complains: {('No' if v == 0 else 'Yes')}\n"
-                elif k == 'ChargeAmount':
-                    label = next((label for label, val in CHARGE_AMOUNT_OPTIONS.items() if val == v), str(v))
-                    customer_details_for_llm += f"- Charge Amount: {label}\n"
-                elif k == 'AgeGroup':
-                    label = next((label for label, val in AGE_GROUP_OPTIONS.items() if val == v), str(v))
-                    customer_details_for_llm += f"- Age Group: {label}\n"
-                elif k == 'TariffPlan':
-                    label = next((label for label, val in TARIFF_PLAN_OPTIONS.items() if val == v), str(v))
-                    customer_details_for_llm += f"- Tariff Plan: {label}\n"
-                elif k == 'Status':
-                    label = next((label for label, val in STATUS_OPTIONS.items() if val == v), str(v))
-                    customer_details_for_llm += f"- Status: {label}\n"
-                else:
-                    customer_details_for_llm += f"- {k}: {v}\n"
-
-            if churn_votes >= no_churn_votes:
-                churn_risk_level = "HIGH CHURN RISK"
-                st.error(f"⚠️ **HIGH RISK: The ensemble predicts the customer will CHURN** (based on {churn_votes} out of {len(ENSEMBLE_MODELS)} models).")
-                flash_alert(color="red") # Display transient red flash
-            else:
-                churn_risk_level = "LOW CHURN RISK"
-                st.success(f"✅ **LOW RISK: The ensemble predicts the customer will NOT CHURN** (based on {no_churn_votes} out of {len(ENSEMBLE_MODELS)} models).")
-                flash_alert(color="blue") # Display transient blue flash
-
-            st.markdown("---")
-            st.subheader("AI-Powered Recommendations from Google Gemini")
-
-            # CORRECTED CALL: Pass the gemini_model object
-            ai_recommendations = get_gemini_recommendations(
-                gemini_model, # This is the key fix
-                churn_risk_level,
-                customer_details_for_llm,
-                PRE_LISTED_OFFERS,
-                COMPANY_NAME
-            )
-            
-            if ai_recommendations:
-                st.markdown(ai_recommendations)
-                # You might need to uncomment and ensure st_copy_to_clipboard is working
-                st_copy_to_clipboard(ai_recommendations)
-            else:
-                st.info("No AI recommendations generated (Gemini might be unavailable or errored).")
+elif all_customers_df is None:
+    st.info("Customer search functionality is unavailable as 'customer_data_with_identifiers.csv' was not found.")
 
 st.markdown("---")
-st.markdown(f"Developed with ❤️ using Streamlit for {COMPANY_NAME}")
+
+# --- Customer Input Section ---
+st.header("Enter Customer Details for Prediction 📝")
+
+# Persistent state for form inputs
+with st.form("customer_details_form"):
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.subheader("Call & Usage Details")
+        st.number_input("Call Failure (count)", min_value=0, max_value=50, value=st.session_state['CallFailure'], key='CallFailure_input')
+        st.number_input("Subscription Length (months)", min_value=1, max_value=100, value=st.session_state['SubscriptionLength'], key='SubscriptionLength_input')
+        st.number_input("Seconds Use (total)", min_value=0, max_value=10000, value=st.session_state['SecondsUse'], key='SecondsUse_input')
+        st.number_input("Frequency Use (calls per month)", min_value=0, max_value=200, value=st.session_state['FrequencyUse'], key='FrequencyUse_input')
+
+    with col2:
+        st.subheader("Billing & Communication")
+        st.selectbox("Complains", options=list(COMPLAINS_OPTIONS.keys()), format_func=lambda x: x,
+                     index=list(COMPLAINS_OPTIONS.values()).index(st.session_state['Complains']), key='Complains_selected')
+        st.selectbox("Charge Amount", options=list(CHARGE_AMOUNT_OPTIONS.keys()), format_func=lambda x: x,
+                     index=list(CHARGE_AMOUNT_OPTIONS.values()).index(st.session_state['ChargeAmount']), key='ChargeAmount_selected')
+        st.number_input("Frequency SMS (count)", min_value=0, max_value=500, value=st.session_state['FrequencySMS'], key='FrequencySMS_input')
+        st.number_input("Distinct Calls (count)", min_value=0, max_value=100, value=st.session_state['DistinctCalls'], key='DistinctCalls_input')
+    
+    with col3:
+        st.subheader("Demographics & Value")
+        st.number_input("Age (years)", min_value=18, max_value=90, value=st.session_state['Age'], key='Age_input')
+        st.selectbox("Age Group", options=list(AGE_GROUP_OPTIONS.keys()), format_func=lambda x: x,
+                     index=list(AGE_GROUP_OPTIONS.values()).index(st.session_state['AgeGroup']), key='AgeGroup_selected')
+        st.selectbox("Tariff Plan", options=list(TARIFF_PLAN_OPTIONS.keys()), format_func=lambda x: x,
+                     index=list(TARIFF_PLAN_OPTIONS.values()).index(st.session_state['TariffPlan']), key='TariffPlan_selected')
+        st.selectbox("Status", options=list(STATUS_OPTIONS.keys()), format_func=lambda x: x,
+                     index=list(STATUS_OPTIONS.values()).index(st.session_state['Status']), key='Status_selected')
+        st.number_input("Customer Value (£)", min_value=0.0, max_value=5000.0, value=st.session_state['CustomerValue'], step=10.0, key='CustomerValue_input')
+
+    predict_button = st.form_submit_button("Predict Churn")
+
+    if predict_button:
+        # Update session state values from form inputs
+        st.session_state['CallFailure'] = st.session_state['CallFailure_input']
+        st.session_state['SubscriptionLength'] = st.session_state['SubscriptionLength_input']
+        st.session_state['SecondsUse'] = st.session_state['SecondsUse_input']
+        st.session_state['FrequencyUse'] = st.session_state['FrequencyUse_input']
+        st.session_state['Complains'] = COMPLAINS_OPTIONS[st.session_state['Complains_selected']]
+        st.session_state['ChargeAmount'] = CHARGE_AMOUNT_OPTIONS[st.session_state['ChargeAmount_selected']]
+        st.session_state['FrequencySMS'] = st.session_state['FrequencySMS_input']
+        st.session_state['DistinctCalls'] = st.session_state['DistinctCalls_input']
+        st.session_state['Age'] = st.session_state['Age_input']
+        st.session_state['AgeGroup'] = AGE_GROUP_OPTIONS[st.session_state['AgeGroup_selected']]
+        st.session_state['TariffPlan'] = TARIFF_PLAN_OPTIONS[st.session_state['TariffPlan_selected']]
+        st.session_state['Status'] = STATUS_OPTIONS[st.session_state['Status_selected']]
+        st.session_state['CustomerValue'] = st.session_state['CustomerValue_input']
+
+        customer_data = {
+            'CallFailure': st.session_state['CallFailure'],
+            'Complains': st.session_state['Complains'],
+            'SubscriptionLength': st.session_state['SubscriptionLength'],
+            'ChargeAmount': st.session_state['ChargeAmount'],
+            'SecondsUse': st.session_state['SecondsUse'],
+            'FrequencyUse': st.session_state['FrequencyUse'],
+            'FrequencySMS': st.session_state['FrequencySMS'],
+            'DistinctCalls': st.session_state['DistinctCalls'],
+            'AgeGroup': st.session_state['AgeGroup'],
+            'TariffPlan': st.session_state['TariffPlan'],
+            'Status': st.session_state['Status'],
+            'Age': st.session_state['Age'],
+            'CustomerValue': st.session_state['CustomerValue']
+        }
+        df_single_customer = pd.DataFrame([customer_data])
+
+        st.markdown("---")
+        st.subheader("Prediction Results 📈")
+
+        # --- Generate Customer Details String for LLM ---
+        customer_details_for_llm = f"""
+        - Call Failure: {st.session_state['CallFailure']}
+        - Complains: {'Yes' if st.session_state['Complains'] == 1 else 'No'}
+        - Subscription Length: {st.session_state['SubscriptionLength']} months
+        - Charge Amount: {st.session_state['ChargeAmount']} (on a scale of 0-9)
+        - Seconds Use: {st.session_state['SecondsUse']} seconds
+        - Frequency Use: {st.session_state['FrequencyUse']} calls/month
+        - Frequency SMS: {st.session_state['FrequencySMS']} SMS/month
+        - Distinct Calls: {st.session_state['DistinctCalls']} unique numbers
+        - Age Group: {st.session_state['AgeGroup']} (1-5, 5 being oldest)
+        - Tariff Plan: {'Pay as you go' if st.session_state['TariffPlan'] == 1 else 'Contract'}
+        - Status: {'Active' if st.session_state['Status'] == 1 else 'Not Active'}
+        - Age: {st.session_state['Age']} years
+        - Customer Value: £{st.session_state['CustomerValue']:.2f}
+        """
+        
+        # Clear Keras session before making predictions to prevent potential resource conflicts
+        # This is particularly helpful when using TensorFlow/Keras models repeatedly in a Streamlit app.
+        K.clear_session()
+        st.info("Keras backend session cleared for stable predictions.")
+
+        # Perform predictions with all models
+        ensemble_predictions = []
+        model_prob_data = [] # To store probabilities for charting
+        model_results_markdown = "##### Individual Model Predictions:\n"
+
+        for model_name, model_info in ENSEMBLE_MODELS.items():
+            model_instance = model_info['model']
+            model_type = model_info['type']
+            
+            with st.spinner(f"Predicting with {model_name}..."):
+                preds, probs, _ = predict_churn(
+                    model_instance, 
+                    df_single_customer, 
+                    scaler, 
+                    X_train_columns, 
+                    model_type=model_type, 
+                    gemini_model=None # Don't generate recommendations for individual models here
+                )
+                
+                prediction_text = "CHURN" if preds[0] == 1 else "NO CHURN"
+                ensemble_predictions.append(preds[0])
+                model_prob_data.append({'Model': model_name, 'Probability': probs[0], 'Prediction': prediction_text}) # Store for chart
+                model_results_markdown += f"- **{model_name}**: {prediction_text} (Probability: {probs[0]:.2f})\n"
+
+        st.markdown(model_results_markdown)
+        st.markdown("---")
+
+        # --- Ensemble Voting ---
+        churn_votes = sum(ensemble_predictions) # Count how many models predicted churn
+
+        st.subheader("Ensemble Consensus:")
+        # Modified logic: If any model predicts churn, the ensemble predicts churn
+        if churn_votes > 0: 
+            churn_risk_level = "HIGH CHURN RISK"
+            st.error(f"⚠️ **HIGH RISK: The ensemble predicts the customer will CHURN** (based on {churn_votes} out of {len(ENSEMBLE_MODELS)} models predicting churn).")
+            flash_alert(color="red") # Display transient red flash
+        else:
+            churn_risk_level = "LOW CHURN RISK"
+            st.success(f"✅ **LOW RISK: The ensemble predicts the customer will NOT CHURN** (based on no models predicting churn).")
+            flash_alert(color="blue") # Display transient blue flash
+
+        st.markdown("---")
+        
+        # --- Churn Probability by Model Graph ---
+        st.subheader("Individual Model Churn Probabilities")
+        df_probs = pd.DataFrame(model_prob_data)
+        fig_probs = px.bar(df_probs, x='Model', y='Probability',
+                           title='Churn Probability by Model',
+                           labels={'Probability': 'Churn Probability'},
+                           color='Probability',
+                           color_continuous_scale=px.colors.sequential.Plasma,
+                           range_y=[0, 1],
+                           text_auto='.2f',
+                           height=400
+                           )
+        fig_probs.update_layout(xaxis_title="Machine Learning Model", yaxis_title="Predicted Churn Probability")
+        st.plotly_chart(fig_probs, use_container_width=True)
+
+        # --- Ensemble Vote Distribution Graph ---
+        st.subheader("Ensemble Vote Distribution")
+        no_churn_votes = len(ENSEMBLE_MODELS) - churn_votes
+        vote_data = pd.DataFrame({
+            'Vote': ['Models Predicting Churn', 'Models Predicting No Churn'],
+            'Count': [churn_votes, no_churn_votes]
+        })
+        fig_votes = px.bar(vote_data, x='Vote', y='Count',
+                           title='Ensemble Model Votes',
+                           labels={'Count': 'Number of Models'},
+                           color='Vote',
+                           color_discrete_map={'Models Predicting Churn': '#D62728', 'Models Predicting No Churn': '#1F77B4'},
+                           range_y=[0, len(ENSEMBLE_MODELS)],
+                           text_auto=True,
+                           height=400
+                           )
+        fig_votes.update_layout(xaxis_title="Ensemble Vote Outcome", yaxis_title="Number of Models")
+        st.plotly_chart(fig_votes, use_container_width=True)
+
+
+        st.markdown("---")
+        st.subheader("AI-Powered Recommendations from Google Gemini")
+
+        ai_recommendations = get_gemini_recommendations(
+            gemini_model,
+            churn_risk_level,
+            customer_details_for_llm,
+            PRE_LISTED_OFFERS,
+            COMPANY_NAME
+        )
+        
+        if ai_recommendations:
+            st.markdown(ai_recommendations)
+            st_copy_to_clipboard(ai_recommendations)
+        else:
+            st.info("No AI recommendations generated (Gemini might be unavailable or errored).")
+
+st.markdown("---")
+st.markdown(f"Developed by Vinu & UK for {COMPANY_NAME} | Version 1.0")

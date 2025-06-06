@@ -126,66 +126,68 @@ def predict_churn(model, df_input, scaler, X_train_columns, model_type='xgb', ge
         customer_data = df_input.iloc[0].to_dict() if not df_input.empty else {}
         churn_prediction = "Likely to Churn" if preds[0] == 1 else "Unlikely to Churn"
         churn_probability = probs[0] * 100
-
+        
         prompt = (
             f"A customer with the following profile has been predicted as '{churn_prediction}' "
-            f"with a probability of {churn_probability:.2f}%:\n\n"
-            f"Customer Profile: {customer_data}\n\n"
-            "Based on this, suggest concise, actionable, and customer-centric recommendations "
-            "to prevent churn or enhance retention. Focus on 2-3 key strategies. "
-            "Format the recommendations as bullet points."
+            f"with a probability of {churn_probability:.2f}%. "
+            f"Customer details: {customer_data}. "
+            "Please provide concise, actionable recommendations for a customer service representative "
+            "to either retain this customer (if high churn risk) or enhance loyalty (if low churn risk). "
+            "Suggest concrete steps, considering the customer's attributes."
         )
         try:
-            response = gemini_model.generate_content(prompt)
-            recommendations = response.text
+            # For a production app, consider using genai.ChatSession or more structured prompts
+            # For now, a direct generate_content call will suffice.
+            ai_response = gemini_model.generate_content(prompt)
+            recommendations = ai_response.text
         except Exception as e:
-            recommendations = f"Failed to get recommendations from Gemini: {e}"
+            print(f"Error generating Gemini recommendations: {e}")
+            recommendations = "Could not generate AI recommendations."
 
     return preds, probs, recommendations
 
 if __name__ == '__main__':
-    # Example usage for making predictions
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    models_dir = os.path.join(project_root, 'models')
-
-    # Load all necessary assets
-    loaded_assets = load_all_models(models_dir)
-
-    scaler = loaded_assets.get('scaler')
-    xgb_model = loaded_assets.get('xgb_smote')
-    ann_model = loaded_assets.get('ann_class_weights')
-    ann_sm_model = loaded_assets.get('ann_smote')
-    ann_focal_model = loaded_assets.get('ann_focal_loss')
-
-    # Create a dummy DataFrame for new predictions
+    from preprocessor import preprocess_data # Import preprocess_data
+    # Dummy data for demonstration
     df_new_single = pd.DataFrame({
-        'CallFailure': [8], 'Complains': [0], 'SubscriptionLength': [38],
-        'ChargeAmount': [0], 'SecondsUse': [4370], 'FrequencyUse': [71],
-        'FrequencySMS': [5], 'DistinctCalls': [17], 'AgeGroup': [3],
-        'TariffPlan': [1], 'Status': [1], 'Age': [30],
-        'CustomerValue': [197.64]
+        'CallFailure': [5], 'Complains': [0], 'SubscriptionLength': [30],
+        'ChargeAmount': [1], 'SecondsUse': [1000], 'FrequencyUse': [20],
+        'FrequencySMS': [10], 'DistinctCalls': [5], 'AgeGroup': [2],
+        'TariffPlan': [1], 'Status': [1], 'Age': [25],
+        'CustomerValue': [500.0]
     })
 
-    # To get X_train_columns, you need to load the original data and preprocess it once
-    # or save X_train_columns when training the model. For this example, we'll
-    # create a dummy set of columns. In a real scenario, this would come from `model_trainer.py`.
-    # Let's assume you save the X.columns from the training set alongside models.
-    # For demonstration, let's load a full dataset to get X_train_columns:
-    from data_loader import load_data
-    from preprocessor import preprocess_data
-    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx')
-    df_full = load_data(data_path)
-    if df_full is not None:
-        X_train_dummy = df_full.drop('Churn', axis=1)
-        X_train_dummy = pd.get_dummies(X_train_dummy, drop_first=True)
-        X_train_columns = X_train_dummy.columns.tolist()
-    else:
-        X_train_columns = df_new_single.columns.tolist() # Fallback, not ideal for real app
+    # Adjust project_root for script execution context
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    models_dir = os.path.join(project_root, 'models')
 
-    if scaler and xgb_model and ann_model and ann_sm_model and ann_focal_model:
-        # Initialize Gemini model
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY")) # Ensure your API key is set
-        gemini_model = genai.GenerativeModel('gemini-1.5-flash')  # Use gemini-1.5-flash
+    # Ensure models directory exists
+    if not os.path.exists(models_dir):
+        print(f"Models directory not found at {models_dir}. Please run model_trainer.py first.")
+        exit()
+
+    # Load all models and scaler
+    loaded_assets = load_all_models(models_dir)
+    xgb_model = loaded_assets.get('xgb_smote')
+    ann_model = loaded_assets.get('ann_class_weights') # Or 'ann_smote', 'ann_focal_loss'
+    scaler = loaded_assets.get('scaler')
+
+    # Dummy X_train_columns for demonstration (in a real scenario, these would be saved/loaded)
+    # This list must precisely match the columns the model was trained on AFTER get_dummies.
+    # For robust production, save these from model_trainer.py
+    X_train_columns = ['CallFailure', 'Complains', 'SubscriptionLength', 'ChargeAmount',
+                       'SecondsUse', 'FrequencyUse', 'FrequencySMS', 'DistinctCalls',
+                       'AgeGroup', 'TariffPlan', 'Status', 'Age', 'CustomerValue'] # Example, update with actual trained columns
+
+    if xgb_model and scaler:
+        # Initialize Gemini model (if API key is available)
+        try:
+            # Assuming GEMINI_API_KEY is an environment variable for local testing
+            genai.configure(api_key=os.getenv("GEMINI_API_KEY")) # Ensure your API key is set
+            gemini_model = genai.GenerativeModel('gemini-1.5-flash')  # Use gemini-1.5-flash
+        except Exception as e:
+            print(f"Gemini API initialization failed: {e}. AI recommendations will be unavailable.")
+            gemini_model = None
 
         # Predict with XGBoost
         xgb_preds, xgb_probs, xgb_recs = predict_churn(xgb_model, df_new_single, scaler, X_train_columns, model_type='xgb', gemini_model=gemini_model)
@@ -200,7 +202,8 @@ if __name__ == '__main__':
         print(f"ANN + SMOTE Prediction: {ann_sm_preds[0]}, Probability: {ann_sm_probs[0]:.4f}, Recommendations: {ann_sm_recs}")
 
         # Predict with ANN + Focal Loss
-        ann_focal_preds, ann_focal_probs, ann_focal_recs = predict_churn(ann_focal_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
-        print(f"ANN + Focal Loss Prediction: {ann_focal_preds[0]}, Probability: {ann_focal_probs[0]:.4f}, Recommendations: {ann_focal_recs}")
-        
-        
+        ann_fl_preds, ann_fl_probs, ann_fl_recs = predict_churn(ann_focal_loss_model, df_new_single, scaler, X_train_columns, model_type='ann', gemini_model=gemini_model)
+        print(f"ANN + Focal Loss Prediction: {ann_fl_preds[0]}, Probability: {ann_fl_probs[0]:.4f}, Recommendations: {ann_fl_recs}")
+
+    else:
+        print("Models or scaler not loaded. Cannot perform prediction.")

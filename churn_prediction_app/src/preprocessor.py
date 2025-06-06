@@ -69,17 +69,16 @@ def load_scaler(path):
         print(f"Error: Scaler file not found at {path}")
         return None
     except Exception as e:
-        print(f"An error occurred while loading scaler: {e}")
+        print(f"An error occurred loading scaler: {e}")
         return None
 
 if __name__ == '__main__':
-    # Example usage for training
-    from data_loader import load_data
-    # Assuming dummy_data_path from data_loader example
+    # This block is for testing the preprocessor functions independently
+    from data_loader import load_data # Assuming data_loader is in the same directory or accessible
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx')
-    df = load_data(data_path)
+    data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx') # Adjust as per your data path
 
+    df = load_data(data_path)
     if df is not None:
         X_scaled, y, scaler, X_sm, y_sm, X_cols = preprocess_data(df, is_training=True)
         print("\n--- Preprocessing for Training ---")
@@ -108,4 +107,6 @@ if __name__ == '__main__':
         if loaded_scaler:
             X_new_scaled, _, _, _, _, _ = preprocess_data(df_new, is_training=False, scaler=loaded_scaler, X_train_columns=X_cols)
             print("X_new_scaled shape:", X_new_scaled.shape)
-            print("X_new_scaled (first 5 rows):\n", X_new_scaled.head())
+            print("X_new_scaled head:\n", X_new_scaled.head())
+        else:
+            print("Could not load scaler for prediction example.")
