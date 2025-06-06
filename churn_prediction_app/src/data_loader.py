@@ -5,12 +5,13 @@ def load_data(data_path):
     """
     Loads the dataset from the specified path.
     Args:
-        data_path (str): The path to the Excel data file.
+        data_path (str): The path to the CSV data file.
     Returns:
         pd.DataFrame: The loaded DataFrame.
     """
     try:
-        df = pd.read_excel(data_path)
+        # Changed from pd.read_excel to pd.read_csv
+        df = pd.read_csv(data_path)
         print("Data loaded successfully.")
         return df
     except FileNotFoundError:
@@ -26,7 +27,8 @@ if __name__ == '__main__':
     # You would typically have a config.py to define DATA_PATH
     # For now, let's assume it's in the parent directory
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dummy_data_path = os.path.join(project_root, 'data', 'customer_churn.csv') # Adjust as per your actual data path
+    # This dummy path should now reflect the CSV file
+    dummy_data_path = os.path.join(project_root, 'data', 'customer_churn.csv')
 
     # Create a dummy CSV file for testing if it doesn't exist
     if not os.path.exists(os.path.join(project_root, 'data')):
@@ -35,14 +37,14 @@ if __name__ == '__main__':
         dummy_df = pd.DataFrame({
             'CallFailure': [8,0,10], 'Complains': [0,0,0], 'SubscriptionLength': [38,39,37],
             'ChargeAmount': [0,0,0], 'SecondsUse': [4370,318,2453], 'FrequencyUse': [71,5,60],
-            'FrequencySMS': [5,7,359], 'DistinctCalls': [17,2,30], 'AgeGroup': [3,2,4],
-            'TariffPlan': [1,1,1], 'Status': [1,1,1], 'Age': [30,25,40],
-            'CustomerValue': [1000.0, 50.0, 750.0], 'Churn': [0, 0, 1]
+            'FrequencySMS': [5,7,359], 'DistinctCalls': [17,6,20], 'AgeGroup': [2,3,2],
+            'TariffPlan': [1,2,1], 'Status': [1,1,1], 'Age': [30,45,28],
+            'CustomerValue': [150.0, 200.0, 180.0], 'Churn': [0, 1, 0]
         })
         dummy_df.to_csv(dummy_data_path, index=False)
-        print(f"Dummy data created at {dummy_data_path}")
+        print(f"Created dummy CSV file at {dummy_data_path}")
 
-    df = load_data(dummy_data_path)
-    if df is not None:
-        print("\n--- Loaded Data Sample ---")
-        print(df.head())
+    df_test = load_data(dummy_data_path)
+    if df_test is not None:
+        print(f"Loaded DataFrame shape: {df_test.shape}")
+        print(f"Loaded DataFrame columns: {df_test.columns.tolist()}")
