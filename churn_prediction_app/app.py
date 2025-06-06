@@ -249,7 +249,7 @@ def get_model_assets():
     # --- MODIFIED LINE HERE ---
     data_path = os.path.join(project_root, 'data', 'customer_churn.csv')
 
-    loaded_assets = load_all_models(models_dir)
+    loaded_assets = load_all_models()
 
     try:
         df_full_for_cols = load_data(data_path)
