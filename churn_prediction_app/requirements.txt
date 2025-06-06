@@ -11,7 +11,7 @@ matplotlib
 seaborn
 plotly
 
-# Streamlit and related utilities
+# Streamlit and related ut
 streamlit
 st-copy-to-clipboard
 
