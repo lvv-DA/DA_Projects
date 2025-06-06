@@ -26,7 +26,7 @@ if __name__ == '__main__':
     # You would typically have a config.py to define DATA_PATH
     # For now, let's assume it's in the parent directory
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dummy_data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx') # Adjust as per your actual data path
+    dummy_data_path = os.path.join(project_root,'customer_churn.xlsx') # Adjust as per your actual data path
 
     # Create a dummy Excel file for testing if it doesn't exist
     if not os.path.exists(os.path.join(project_root, 'data')):
