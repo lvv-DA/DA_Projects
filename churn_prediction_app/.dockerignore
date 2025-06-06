@@ -1,11 +1,15 @@
-.git
-.gitignore
-__pycache__/
-*.pyc
-*.env
-.venv/
+# Ignore these files in Docker build
+**/__pycache__
+**/.env
+**/.git
+**/.vscode
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.DS_Store
+.env
 venv/
-.streamlit/
-data/*.zip # Example, if you have raw zip files
-models/*.zip # Example, if you have raw zip files
-ollama/ # If you have local Ollama installation files you don't want to copy
+*.ipynb
+*.csv
+*.log
+

@@ -7,9 +7,9 @@ from sklearn.metrics import classification_report, roc_auc_score
 from xgboost import XGBClassifier
 from imblearn.over_sampling import SMOTE
 from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.python.keras.models import Sequential
-from tensorflow.python.keras.layers import Dense
-from tensorflow.python.keras import backend as K
+from tf_keras.models import Sequential
+from tf_keras.layers import Dense
+from tf_keras import backend as K
 import tensorflow as tf
 
 def focal_loss(gamma=2., alpha=.25):

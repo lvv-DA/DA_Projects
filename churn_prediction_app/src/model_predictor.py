@@ -1,8 +1,8 @@
 import pandas as pd
 import joblib
 import os
-from tensorflow.python.keras.models import load_model
-from tensorflow.python.keras import backend as K
+from tf_keras.models import load_model
+from tf_keras import backend as K
 import tensorflow as tf
 import numpy as np
 import google.generativeai as genai
