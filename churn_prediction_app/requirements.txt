@@ -18,7 +18,7 @@ google-auth>=2.15.0
 
 # Streamlit
 streamlit==1.28.0
-st_copy_to_clipboard==0.1.0
+st_copy_to_clipboard
 
 # Visualization
 matplotlib==3.7.2
