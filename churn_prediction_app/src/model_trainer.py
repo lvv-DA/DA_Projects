@@ -55,7 +55,7 @@ def train_and_evaluate_models(X_train_scaled, y_train, X_test_scaled, y_test, X_
     xgb_probs = xgb_model.predict_proba(X_test_scaled)[:, 1]
     print("XGBoost Classification Report:\n", classification_report(y_test, xgb_preds))
     print("XGBoost AUC-ROC Score:", roc_auc_score(y_test, xgb_probs))
-    joblib.dump(xgb_model, os.path.join(models_dir, 'xgb_smote_model.pkl'))
+    joblib.dump(xgb_model, os.path.join(models_dir, 'xgb_model.joblib'))
     print("XGBoost model saved.")
 
     # --- ANN Model with Class Weights ---

@@ -570,10 +570,10 @@ with st.form("customer_details_form"):
                     gemini_model=None # Don't generate recommendations for individual models here
                 )
                 
-                prediction_text = "CHURN" if preds[0] == 1 else "NO CHURN"
-                ensemble_predictions.append(preds[0])
-                model_prob_data.append({'Model': model_name, 'Probability': probs[0], 'Prediction': prediction_text}) # Store for chart
-                model_results_markdown += f"- **{model_name}**: {prediction_text} (Probability: {probs[0]:.2f})\n"
+                prediction_text = "CHURN" if preds == 1 else "NO CHURN"
+                ensemble_predictions.append(preds)
+                model_prob_data.append({'Model': model_name, 'Probability': probs, 'Prediction': prediction_text})# Store for chart
+                model_results_markdown += f"- **{model_name}**: {prediction_text} (Probability: {probs:.2f})\n"
 
         st.markdown(model_results_markdown)
         st.markdown("---")
