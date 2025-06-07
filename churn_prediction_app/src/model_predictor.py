@@ -21,185 +21,236 @@ def focal_loss(gamma=2., alpha=.25):
                -K.sum((1 - alpha) * K.pow(pt_0, gamma) * K.log(1. - pt_0))
     return focal_loss_fixed
 
-# --- MODIFICATION START ---
-# Changed load_all_models to accept 'models_dir'
-def load_all_models(models_dir): # <--- MODIFIED HERE
+def load_all_models(models_dir): # Added models_dir as parameter
     """
-    Loads all trained models and the scaler from the specified directory.
+    Loads all trained models and the scaler.
+    It determines the models directory relative to the current file.
+    Includes verbose logging for debugging deployment issues.
     Args:
-        models_dir (str): The absolute path to the directory containing model files.
+        models_dir (str): The path to the directory containing the model files.
     Returns:
-        dict: A dictionary containing loaded models and the scaler.
+        dict: A dictionary containing loaded scaler, XGBoost, and ANN models.
+              Returns None for any asset that fails to load.
     """
-    loaded_assets = {}
+    loaded_assets = {
+        'scaler': None,
+        'xgb_smote': None,
+        'ann_class_weights': None,
+        'ann_smote': None,
+        'ann_focal_loss': None
+    }
     
-    # Removed internal calculation of models_dir, it's now passed as an argument
-    # The debug prints here should use the passed models_dir
-    print(f"DEBUG: Attempting to load models from calculated path: {models_dir}")
-    print(f"DEBUG: Current working directory (from os.getcwd()): {os.getcwd()}")
-    # These prints are more for app.py context now, but can stay for deep debugging
-    # print(f"DEBUG: Contents of current_script_dir ({os.path.dirname(os.path.abspath(__file__))}): {os.listdir(os.path.dirname(os.path.abspath(__file__))) if os.path.exists(os.path.dirname(os.path.abspath(__file__))) else 'Path does not exist'}")
-    # print(f"DEBUG: Contents of project_root ({os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}): {os.listdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) if os.path.exists(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) else 'Path does not exist'}")
-    print(f"DEBUG: Contents of models_dir ({models_dir}): {os.listdir(models_dir) if os.path.exists(models_dir) else 'Path does not exist'}")
+    # Define custom objects for Keras model loading
+    custom_objects = {'focal_loss_fixed': focal_loss(gamma=2., alpha=.25)}
 
-    # Define paths to models and scaler
+    # Load Scaler
     scaler_path = os.path.join(models_dir, 'scaler.pkl')
-    # Assuming the XGBoost model in 'models' is named 'xgb_smote.joblib' as per app.py's ENSEMBLE_MODELS
-    xgb_path = os.path.join(models_dir, 'xgb_smote.joblib') # Corrected filename assumption
-
-    ann_class_weights_path = os.path.join(models_dir, 'ann_class_weights_model.keras')
-    ann_smote_path = os.path.join(models_dir, 'ann_smote_model.keras')
-    ann_focal_loss_path = os.path.join(models_dir, 'ann_focal_loss_model.keras')
-
-    custom_objects = {'focal_loss_fixed': focal_loss()} # Required for loading ANN models with custom loss
-
-    # Load scaler
     try:
-        if os.path.exists(scaler_path):
-            loaded_assets['scaler'] = joblib.load(scaler_path)
-            print(f"DEBUG: Successfully loaded scaler from {scaler_path}")
-        else:
-            print(f"ERROR: Scaler file not found at expected path: {scaler_path}")
+        loaded_assets['scaler'] = joblib.load(scaler_path)
+        print(f"Successfully loaded scaler from {scaler_path}")
+    except FileNotFoundError:
+        print(f"Error: Scaler file not found at {scaler_path}")
     except Exception as e:
-        print(f"ERROR: Exception loading scaler: {e}")
+        print(f"Error loading scaler from {scaler_path}: {e}")
 
     # Load XGBoost model
+    xgb_smote_path = os.path.join(models_dir, 'xgb_smote_model.joblib')
     try:
-        if os.path.exists(xgb_path):
-            loaded_assets['xgb_smote'] = joblib.load(xgb_path) # Changed key to match app.py's ENSEMBLE_MODELS
-            print(f"DEBUG: Successfully loaded XGBoost model from {xgb_path}")
-        else:
-            print(f"ERROR: XGBoost model file not found at expected path: {xgb_path}")
+        loaded_assets['xgb_smote'] = joblib.load(xgb_smote_path)
+        print(f"Successfully loaded XGBoost model from {xgb_smote_path}")
+    except FileNotFoundError:
+        print(f"Error: XGBoost model file not found at {xgb_smote_path}")
     except Exception as e:
-        print(f"ERROR: Exception loading XGBoost model: {e}")
+        print(f"Error loading XGBoost model from {xgb_smote_path}: {e}")
 
-    # Load ANN models
-    ann_models_to_load = {
-        'ann_class_weights': ann_class_weights_path,
-        'ann_smote': ann_smote_path,
-        'ann_focal_loss': ann_focal_loss_path
-    }
+    # Load ANN models (HDF5 files)
+    ann_class_weights_path = os.path.join(models_dir, 'ann_class_weights.h5')
+    try:
+        # Load ANN models with custom_objects
+        loaded_assets['ann_class_weights'] = load_model(ann_class_weights_path, custom_objects=custom_objects)
+        print(f"Successfully loaded ANN Class Weights model from {ann_class_weights_path}")
+    except FileNotFoundError:
+        print(f"Error: ANN Class Weights model file not found at {ann_class_weights_path}")
+    except Exception as e:
+        print(f"Error loading ANN Class Weights model from {ann_class_weights_path}: {e}")
 
-    for key, path in ann_models_to_load.items():
-        try:
-            if os.path.exists(path):
-                K.clear_session() # Clear Keras session before loading each model
-                loaded_assets[key] = load_model(path, custom_objects=custom_objects)
-                print(f"DEBUG: Successfully loaded {key} model from {path}")
-            else:
-                print(f"ERROR: {key} model file not found at expected path: {path}")
-        except Exception as e:
-            print(f"ERROR: Exception loading {key} model from {path}: {e}")
-            K.clear_session() # Clear session even on error to prevent issues for next model
-            
-    # Ensure ANN models are compiled (if not already during loading)
-    for model_key in ['ann_class_weights', 'ann_smote', 'ann_focal_loss']:
-        if model_key in loaded_assets and loaded_assets[model_key] is not None:
-            try:
-                # Check if model has an optimizer, meaning it's likely compiled
-                # This check is safer than relying on 'optimizer is None' directly
-                if not hasattr(loaded_assets[model_key], 'optimizer') or loaded_assets[model_key].optimizer is None:
-                    loaded_assets[model_key].compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-                    print(f"DEBUG: Re-compiled {model_key} for deployment stability.")
-            except Exception as e:
-                print(f"WARNING: Could not re-compile {model_key}: {e}")
+    ann_smote_path = os.path.join(models_dir, 'ann_smote.h5')
+    try:
+        # Load ANN models with custom_objects
+        loaded_assets['ann_smote'] = load_model(ann_smote_path, custom_objects=custom_objects)
+        print(f"Successfully loaded ANN SMOTE model from {ann_smote_path}")
+    except FileNotFoundError:
+        print(f"Error: ANN SMOTE model file not found at {ann_smote_path}")
+    except Exception as e:
+        print(f"Error loading ANN SMOTE model from {ann_smote_path}: {e}")
+
+    ann_focal_loss_path = os.path.join(models_dir, 'ann_focal_loss.h5')
+    try:
+        # Load ANN models with custom_objects
+        loaded_assets['ann_focal_loss'] = load_model(ann_focal_loss_path, custom_objects=custom_objects)
+        print(f"Successfully loaded ANN Focal Loss model from {ann_focal_loss_path}")
+    except FileNotFoundError:
+        print(f"Error: ANN Focal Loss model file not found at {ann_focal_loss_path}")
+    except Exception as e:
+        print(f"Error loading ANN Focal Loss model from {ann_focal_loss_path}: {e}")
 
     return loaded_assets
 
 
-# Helper for Gemini recommendations (Keep this here for the testing block if needed)
-# However, app.py calls this directly, so it's not strictly needed for predict_churn's return
-def get_gemini_recommendations(gemini_model, churn_risk_level, customer_details, pre_listed_offers, company_name):
+def predict_churn(model, customer_df, scaler, X_train_columns, model_type='xgb'):
     """
-    Generates AI-powered recommendations using the Google Gemini model.
-    """
-    if gemini_model is None:
-        return "AI recommendations are unavailable due to Gemini model initialization failure."
-
-    try:
-        # Construct the prompt based on churn risk and customer details
-        prompt_parts = [
-            f"As an AI assistant for {company_name}, analyze the following customer details and churn risk:\n\n",
-            f"Customer Churn Risk: {churn_risk_level}\n",
-            "Customer Details:\n",
-            f"- Subscription Length: {customer_details.get('SubscriptionLength', 'N/A')} months\n",
-            f"- Monthly Charge: ${customer_details.get('ChargeAmount', 'N/A')}\n", # Corrected key
-            f"- Total Usage (Seconds): {customer_details.get('SecondsUse', 'N/A')}\n",
-            f"- Frequency of Use: {customer_details.get('FrequencyUse', 'N/A')}\n",
-            f"- Call Failures: {customer_details.get('CallFailure', 'N/A')}\n",
-            f"- Complaints: {'Yes' if customer_details.get('Complains', 0) == 1 else 'No'}\n",
-            f"- Age: {customer_details.get('Age', 'N/A')}\n",
-            f"- Customer Value: ${customer_details.get('CustomerValue', 'N/A')}\n",
-            "\nBased on this, provide concise, actionable, and empathetic recommendations for churn prevention.\n",
-            "Keep the recommendations brief (1-3 sentences) and bullet points are preferred. Do not use markdown headers."
-        ]
-
-        # Add pre-listed offers if available and risk is high
-        if churn_risk_level == "HIGH CHURN RISK" and pre_listed_offers:
-            prompt_parts.append("\nConsider these potential offers to prevent churn:\n")
-            for offer in pre_listed_offers:
-                prompt_parts.append(f"- {offer}\n")
-            prompt_parts.append("\nIncorporate these offers naturally if relevant.\n")
-
-        response = gemini_model.generate_content("".join(prompt_parts))
-        return response.text
-    except Exception as e:
-        print(f"Error generating Gemini recommendations: {e}")
-        return None
-
-# --- MODIFICATION START ---
-# Removed gemini_model and AI recommendations from predict_churn, as app.py handles this separately
-def predict_churn(model, customer_df, scaler, X_train_columns, model_type='xgb'): # <--- MODIFIED HERE
-    """
-    Makes a churn prediction for a single customer using the given model.
+    Predicts churn for a single customer using the loaded model.
     Args:
-        model: The trained churn prediction model (XGBoost or Keras ANN).
-        customer_df (pd.DataFrame): DataFrame with a single customer's data.
+        model: The loaded trained model (XGBoost or Keras ANN).
+        customer_df (pd.DataFrame): DataFrame containing a single customer's data.
         scaler: The fitted StandardScaler.
-        X_train_columns (list): List of columns from the training data.
-        model_type (str): Type of model ('xgb' or 'ann').
+        X_train_columns (list): List of columns from the training data to ensure consistency.
+        model_type (str): 'xgb' for XGBoost, 'ann' for Keras ANN.
     Returns:
-        tuple: (prediction (0 or 1), probability)
+        tuple: (prediction, probability)
     """
-    if customer_df.empty:
-        return 0, 0.0
-
     # Preprocess the single customer data
-    customer_processed, _, _, _, _, _ = preprocess_data(customer_df, is_training=False, scaler=scaler, X_train_columns=X_train_columns)
-
-    if customer_processed is None or customer_processed.empty:
-        return 0, 0.0
-
+    # The preprocess_data function now handles aligning columns and scaling
+    X_processed, _, _, _, _, _ = preprocess_data(
+        customer_df, is_training=False, scaler=scaler, X_train_columns=X_train_columns, target_column=None # No target_column for prediction
+    )
+    
     prediction = 0
     probability = 0.0
 
     if model_type == 'xgb':
-        # XGBoost prediction
-        probability = model.predict_proba(customer_processed)[:, 1][0]
-        prediction = 1 if probability >= 0.5 else 0
+        prediction = model.predict(X_processed)[0]
+        probability = model.predict_proba(X_processed)[:, 1][0]
     elif model_type == 'ann':
-        # ANN prediction (Keras models)
-        K.clear_session() # Clear the Keras session for this specific prediction
-        probability = model.predict(customer_processed, verbose=0)[0][0] # verbose=0 to suppress Keras output
+        # Keras models return probabilities directly (or logits that need sigmoid)
+        # Assuming your ANN models output a single probability for class 1
+        raw_probability = model.predict(X_processed, verbose=0)[0][0] # Get the single probability
+        probability = float(raw_probability)
         prediction = 1 if probability >= 0.5 else 0
     else:
-        return 0, 0.0
+        raise ValueError("Invalid model_type. Must be 'xgb' or 'ann'.")
 
-    # Removed AI recommendation logic from here, as app.py handles it.
     return prediction, probability
 
+
+def get_gemini_recommendations(gemini_model, churn_risk_level, customer_details, pre_listed_offers, company_name):
+    """
+    Generates AI-powered recommendations using the Google Gemini model.
+    Args:
+        gemini_model: The configured Google Gemini generative model.
+        churn_risk_level (str): "HIGH CHURN RISK" or "LOW CHURN RISK".
+        customer_details (dict): Dictionary of customer's input features.
+        pre_listed_offers (list): A list of pre-defined offers.
+        company_name (str): The name of the company.
+    Returns:
+        str: AI-generated recommendations, or None if an error occurs.
+    """
+    if gemini_model is None:
+        return "AI recommendations are unavailable due to an uninitialized Gemini model."
+
+    try:
+        customer_info_str = "\n".join([f"- {k}: {v}" for k, v in customer_details.items()])
+        offers_str = "\n".join([f"- {offer}" for offer in pre_listed_offers])
+
+        prompt = f"""
+        You are an AI assistant for {company_name}, a telecom company. Your goal is to provide concise and actionable recommendations for customer retention based on their churn risk and profile.
+
+        Customer Churn Risk: {churn_risk_level}
+
+        Customer Profile:
+        {customer_info_str}
+
+        Pre-listed Offers:
+        {offers_str}
+
+        If the customer has 'HIGH CHURN RISK':
+        1. Analyze the customer's profile to identify potential reasons for churn (e.g., high call failures, low usage, low subscription length, complaints).
+        2. Suggest which of the `Pre-listed Offers` would be most suitable for this specific customer's profile to reduce churn.
+        3. Provide additional, creative, and personalized retention strategies (e.g., proactive check-ins, personalized discounts, exclusive access) that are NOT in the `Pre-listed Offers`.
+
+        If the customer has 'LOW CHURN RISK':
+        1. Suggest strategies to maintain their loyalty and increase their engagement.
+        2. Recommend potential upselling opportunities or new services based on their profile.
+        3. Briefly mention a relevant pre-listed offer that could enhance their experience.
+
+        Ensure the recommendations are:
+        - Actionable and specific.
+        - Presented in clear bullet points or numbered lists.
+        - Tailored to the customer's profile.
+        - Professional and empathetic in tone.
+        """
+        
+        response = gemini_model.generate_content(prompt)
+        # Access the text attribute if it exists, otherwise handle potential errors
+        if hasattr(response, 'text'):
+            return response.text
+        elif hasattr(response, 'candidates') and response.candidates:
+            # Fallback for models that might return candidates directly
+            for candidate in response.candidates:
+                if hasattr(candidate, 'text'):
+                    return candidate.text
+        return "AI recommendations could not be generated (no text in response)."
+
+    except Exception as e:
+        print(f"Error generating Gemini recommendations: {e}")
+        return f"AI recommendations could not be generated due to an error: {e}"
+
+
+# Example usage for testing (only runs if model_predictor.py is executed directly)
 if __name__ == '__main__':
-    # This block is for testing purposes only
     print("Running model_predictor.py as a standalone script for testing...")
+    
+    # Set GEMINI_API_KEY for local testing (replace with your actual key or load from .env)
+    # os.environ["GEMINI_API_KEY"] = "YOUR_GEMINI_API_KEY" # Uncomment for local testing
 
-    # Set up dummy environment for testing
-    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' # Disable oneDNN optimizations
-    os.environ['CUDA_VISIBLE_DEVICES'] = '-1' # Hide GPUs from TensorFlow
+    # Define paths relative to the project root for testing
+    current_script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root_test = os.path.dirname(current_script_dir) # Go up one level from 'src'
 
-    # Configure Gemini (for testing purposes, replace with your actual key or env var)
-    # Be cautious with hardcoding API keys; use environment variables or Streamlit secrets in production.
+    models_dir_test = os.path.join(project_root_test, 'models')
+    data_dir_test = os.path.join(project_root_test, 'data')
+    
+    # Ensure models and data directories exist
+    os.makedirs(models_dir_test, exist_ok=True)
+    os.makedirs(data_dir_test, exist_ok=True)
+
+    # Dummy data for X_train_columns inference
+    dummy_churn_data_path = os.path.join(data_dir_test, 'customer_churn.xlsx - Sheet1.csv')
+    if not os.path.exists(dummy_churn_data_path):
+        dummy_df_churn = pd.DataFrame({
+            'CallFailure': [8,0,10], 'Complains': [0,0,0], 'SubscriptionLength': [38,39,37],
+            'ChargeAmount': [0,0,0], 'SecondsUse': [4370,318,2453], 'FrequencyUse': [71,5,60],
+            'FrequencySMS': [5,7,359], 'DistinctCalls': [17,6,20], 'AgeGroup': ['Group2','Group3','Group2'],
+            'TariffPlan': ['PlanA','PlanB','PlanA'], 'Status': ['Active','Inactive','Active'], 'Age': [30,45,28],
+            'CustomerValue': [800.0, 1200.0, 700.0], 'Churn': [0, 1, 0]
+        })
+        dummy_df_churn.to_csv(dummy_churn_data_path, index=False)
+        print(f"Dummy customer_churn.xlsx - Sheet1.csv created for testing at {dummy_churn_data_path}")
+    
+    initial_df_for_cols = pd.read_csv(dummy_churn_data_path, encoding='latin1')
+    categorical_cols_for_inference = initial_df_for_cols.select_dtypes(include=['object', 'category']).columns.tolist()
+    X_for_cols_inference = initial_df_for_cols.drop(columns=['Churn'], errors='ignore')
+    X_train_columns = pd.get_dummies(X_for_cols_inference, columns=categorical_cols_for_inference, drop_first=True).columns.tolist()
+
+
+    # Load models and scaler
+    loaded_assets = load_all_models(models_dir_test) # Pass models_dir_test
+    scaler = loaded_assets.get('scaler')
+    xgb_model = loaded_assets.get('xgb_smote')
+    ann_class_weights = loaded_assets.get('ann_class_weights') # Use specific ANN model for test
+    
+    # --- Dummy customer data for prediction test ---
+    df_new_single = pd.DataFrame([{
+        'CallFailure': 2, 'Complains': 0, 'SubscriptionLength': 24,
+        'ChargeAmount': 60, 'SecondsUse': 1500, 'FrequencyUse': 30,
+        'FrequencySMS': 15, 'DistinctCalls': 8, 'AgeGroup': 'Group2',
+        'TariffPlan': 'PlanA', 'Status': 'Active', 'Age': 35,
+        'CustomerValue': 750.0
+    }])
+
+    # Initialize Gemini model for testing if API key is configured
     gemini_model_test = None
-    if os.getenv("GEMINI_API_KEY"): # Check if set as environment variable
+    if os.getenv("GEMINI_API_KEY"):
         try:
             genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
             gemini_model_test = genai.GenerativeModel('gemini-1.5-flash')
@@ -210,57 +261,28 @@ if __name__ == '__main__':
         print("GEMINI_API_KEY not set in environment variables. Skipping Gemini testing.")
 
 
-    # Define where models are expected to be relative to this script for standalone test
-    current_script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root_test = os.path.dirname(current_script_dir)
-    models_dir_test = os.path.join(project_root_test, 'models')
-
-
-    # Load models - Pass the models_dir_test
-    print("\nAttempting to load all models...")
-    loaded_assets = load_all_models(models_dir_test) # <--- MODIFIED HERE: Pass models_dir_test
-    
-    scaler = loaded_assets.get('scaler')
-    xgb_model = loaded_assets.get('xgb_smote')
-    ann_model = loaded_assets.get('ann_class_weights') # Using class weights model for example
-    
-    # Dummy X_train_columns for testing - you should get this from your preprocessor or a saved file
-    X_train_columns = ['CallFailure', 'Complains', 'SubscriptionLength', 'ChargeAmount', 
-                       'SecondsUse', 'FrequencyUse', 'FrequencySMS', 'DistinctCalls', 
-                       'AgeGroup_2', 'AgeGroup_3', 'AgeGroup_4', 'AgeGroup_5', # Ensure these match actual dummy columns
-                       'TariffPlan_2', 'Status_2', 'Age', 'CustomerValue'] # Adjust based on your actual data's dummified columns
-
-    if all([scaler, xgb_model, ann_model, X_train_columns]):
-        print("All critical assets loaded for testing.")
-
-        # Create a dummy DataFrame for a single customer
-        df_new_single = pd.DataFrame({
-            'CallFailure': [5], 'Complains': [0], 'SubscriptionLength': [30],
-            'ChargeAmount': [1], 'SecondsUse': [1000], 'FrequencyUse': [20],
-            'FrequencySMS': [10], 'DistinctCalls': [5], 'AgeGroup': [2], # AgeGroup will be dummified
-            'TariffPlan': [1], 'Status': [1], 'Age': [25],
-            'CustomerValue': [500.0]
-        })
-
-        # Predict with XGBoost
-        # MODIFIED: predict_churn returns only 2 values now
-        xgb_preds, xgb_probs = predict_churn(xgb_model, df_new_single, scaler, X_train_columns, model_type='xgb')
+    # Predict with XGBoost
+    if xgb_model and scaler and X_train_columns:
+        xgb_preds, xgb_probs = predict_churn(xgb_model, df_new_single.copy(), scaler, X_train_columns, model_type='xgb')
         print(f"\n--- XGBoost Test Prediction ---")
-        print(f"Prediction: {'Churn' if xgb_preds == 1 else 'No Churn'}, Probability: {xgb_probs:.4f}") # <--- MODIFIED HERE
-        
+        print(f"Prediction: {'Churn' if xgb_preds == 1 else 'No Churn'}, Probability: {xgb_probs:.4f}")
+        # Test Gemini recommendation for XGBoost if model loaded
         if gemini_model_test:
-            xgb_recs = get_gemini_recommendations(gemini_model_test, "HIGH CHURN RISK" if xgb_preds == 1 else "LOW CHURN RISK", df_new_single.iloc[0].to_dict(), [], "ABC Telecom")
+            risk_level = "HIGH CHURN RISK" if xgb_preds == 1 else "LOW CHURN RISK"
+            xgb_recs = get_gemini_recommendations(gemini_model_test, risk_level, df_new_single.iloc[0].to_dict(), [], "ABC Telecom")
             print(f"Recommendations: {xgb_recs}")
-
-        # Predict with ANN
-        # MODIFIED: predict_churn returns only 2 values now
-        ann_preds, ann_probs = predict_churn(ann_model, df_new_single, scaler, X_train_columns, model_type='ann')
-        print(f"\n--- ANN Test Prediction ---")
-        print(f"Prediction: {'Churn' if ann_preds == 1 else 'No Churn'}, Probability: {ann_probs:.4f}") # <--- MODIFIED HERE
-        
-        if gemini_model_test:
-            ann_recs = get_gemini_recommendations(gemini_model_test, "HIGH CHURN RISK" if ann_preds == 1 else "LOW CHURN RISK", df_new_single.iloc[0].to_dict(), [], "ABC Telecom")
-            print(f"Recommendations: {ann_recs}")
-
     else:
-        print("Not all critical assets could be loaded for testing. Please check paths and file existence.")
+        print("XGBoost model, scaler or X_train_columns not loaded for testing.")
+
+    # Predict with ANN
+    if ann_class_weights and scaler and X_train_columns:
+        ann_preds, ann_probs = predict_churn(ann_class_weights, df_new_single.copy(), scaler, X_train_columns, model_type='ann')
+        print(f"\n--- ANN Test Prediction (Class Weights) ---")
+        print(f"Prediction: {'Churn' if ann_preds == 1 else 'No Churn'}, Probability: {ann_probs:.4f}")
+        # Test Gemini recommendation for ANN if model loaded
+        if gemini_model_test:
+            risk_level = "HIGH CHURN RISK" if ann_preds == 1 else "LOW CHURN RISK"
+            ann_recs = get_gemini_recommendations(gemini_model_test, risk_level, df_new_single.iloc[0].to_dict(), [], "ABC Telecom")
+            print(f"Recommendations: {ann_recs}")
+    else:
+        print("ANN Class Weights model, scaler or X_train_columns not loaded for testing.")
