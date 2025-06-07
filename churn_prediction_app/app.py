@@ -8,13 +8,10 @@ import plotly.graph_objects as go
 import plotly.express as px
 import time
 
-
 import google.generativeai as genai
 # Import K from tf_keras.backend to use K.clear_session()
 from tf_keras import backend as K
 
-# Define project_root at the top level of app.py
-project_root = os.path.dirname(os.path.abspath(__file__))
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # This hides all GPUs from TensorFlow
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' # This disables oneDNN optimizations as suggested by a warning
@@ -249,28 +246,28 @@ st.markdown(f"""
 @st.cache_resource
 def get_model_assets():
     """Loads all models and scaler, and returns the training columns."""
-    # Calculate the absolute paths to the models and data directories
-    current_models_dir = os.path.join(project_root, 'models')
-    current_data_path = os.path.join(project_root, 'data', 'customer_churn.xlsx') # IMPORTANT: Ensure this is .xlsx if your file is .xlsx
+    models_dir = os.path.join(project_root, 'models')
+    # --- MODIFIED LINE HERE ---
+    data_path = os.path.join(project_root, 'data', 'customer_churn.csv')
 
-    # Pass the calculated models_dir to load_all_models
-    # This is the critical change to ensure correct path resolution
-    loaded_assets = mp.load_all_models(models_dir=current_models_dir)
+    loaded_assets = load_all_models()
 
     try:
-        # Load data to infer training columns using the calculated data_path
-        df_full_for_cols = load_data(current_data_path)
-
+        df_full_for_cols = load_data(data_path)
         if df_full_for_cols is not None:
             if 'Churn' in df_full_for_cols.columns:
                 X_full_for_cols = df_full_for_cols.drop('Churn', axis=1)
             else:
                 X_full_for_cols = df_full_for_cols.copy()
 
+            # Ensure all categorical columns are dummified consistently
+            # It's crucial that preprocessing for training data and inference data align.
+            # You might need to adjust 'preprocess_data' to handle columns consistently
+            # or ensure this dummying reflects your full training pipeline.
             X_full_for_cols_encoded = pd.get_dummies(X_full_for_cols, drop_first=True)
             X_train_columns = X_full_for_cols_encoded.columns.tolist()
         else:
-            st.error(f"Could not load data from {current_data_path} to infer training columns. Check data_loader.py and file path.")
+            st.error(f"Could not load data from {data_path} to infer training columns. Check data_loader.py and file path.")
             X_train_columns = []
     except Exception as e:
         st.error(f"Error loading data for column inference: {e}")
@@ -291,7 +288,7 @@ X_train_columns = assets.get('X_train_columns')
 # Check if all critical assets are loaded
 if not all([scaler, xgb_model, ann_class_weights_model, ann_smote_model, ann_focal_loss_model, X_train_columns]):
     st.error("One or more models/scaler/training columns could not be loaded. Please ensure models are trained and saved correctly.")
-    st.stop() # This will stop the app from running further if assets are missing
+    st.stop()
 
 # Define all models for the ensemble
 ENSEMBLE_MODELS = {
