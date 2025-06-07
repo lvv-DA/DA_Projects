@@ -7,8 +7,8 @@ import seaborn as sns
 import plotly.graph_objects as go
 import plotly.express as px
 import time
-import model_predictor as mp # This import is crucial
-from data_loader import load_data # This import is also crucial
+
+
 import google.generativeai as genai
 # Import K from tf_keras.backend to use K.clear_session()
 from tf_keras import backend as K
